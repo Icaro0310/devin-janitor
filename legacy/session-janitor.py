@@ -7,23 +7,23 @@ Pipeline (ordem de segurança):
   2. Classifica cada sessão em tiers:
        KEEP        — marcada "não apagar", allowlist, ou dentro da janela de
                      graça (default 48h desde última atividade)
-       AUTO-DELETE — vazias; ruído de automação/eval (JEV, classificações,
+       AUTO-DELETE — vazias; ruído de automação/eval (DJAEVIN, classificações,
                      probes); ciclos efémeros heartbeat/mailbox; duplicadas
                      (fica a irmã com mais atividade)
-       JUDGE       — sinais fracos mas ambíguas → pergunta ao Jevin
-                     (jev-local `judge`) se vale a pena preservar
+       JUDGE       — sinais fracos mas ambíguas → pergunta ao Djævin
+                     (djaevin-local `judge`) se vale a pena preservar
   3. Apaga candidatas: rows em sessions.db + ficheiros acp-messages/*.db.
      Ficheiros bloqueados (Devin aberto) ficam em `.devin/janitor-pending.json`
      e são re-tentados em cada corrida.
   4. VACUUM só se o Devin.exe estiver fechado.
 
-Jevin é fail-open: se o backend estiver em baixo (Ollama off etc.), sessões
+Djævin é fail-open: se o backend estiver em baixo (Ollama off etc.), sessões
 ambíguas são CONSERVADAS — nunca apagadas sem veredito.
 
 Uso:
     python scripts/session-janitor.py              # dry-run: mostra o plano
     python scripts/session-janitor.py --apply      # executa a limpeza
-    python scripts/session-janitor.py --apply --no-jevin --grace-hours 72
+    python scripts/session-janitor.py --apply --no-djævin --grace-hours 72
 
 Agendamento diário (Task Scheduler): ver skill .devin/skills/session-janitor.
 """
@@ -60,7 +60,7 @@ MSG_TABLES = ["message_nodes", "tool_call_state", "rendered_commits",
 NOISE_RE = re.compile(
     r"judge tool|classif|support_triage|entailment|^\[\d+\]$|^\{\"items\"|"
     r"^billing$|^BLOCKED$|SESSION_OK|echo.*test|sentinel|safe test command|"
-    r"heartbeat-probe|Lista.*(tools|ferramentas).*jev-local|tools MCP.*jev-local",
+    r"heartbeat-probe|Lista.*(tools|ferramentas).*djaevin-local|tools MCP.*djaevin-local",
     re.I)
 
 # Ciclos one-shot cujo conhecimento durável já vive noutro lado
@@ -69,19 +69,19 @@ EPHEMERAL_RE = re.compile(
     r"inbox|slack-bridge|slack bridge|Tarefa Slack|Processamento|"
     r"Processar ficheiros|timeout ACP|heartbeat", re.I)
 
-# Veredito do Jevin sobre sessões ambíguas
+# Veredito do Djævin sobre sessões ambíguas
 JUDGE_STATEMENT = (
     "This session transcript contains durable, reusable knowledge — "
     "decisions, conventions, fixes or project context worth preserving "
     "for future work.")
 
-JEV_PYTHON = (WS / "vendor/poorjev/.venv/Scripts/python.exe")
-JEV_ENV = {
+DJAEVIN_PYTHON = (WS / "vendor/poorjev/.venv/Scripts/python.exe")
+DJAEVIN_ENV = {
     **os.environ,
     "POORJEV_BACKEND": os.environ.get("JANITOR_JEV_BACKEND", "ollama"),
     "OLLAMA_HOST": os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
     "POORJEV_MODEL": os.environ.get("POORJEV_MODEL", "qwen2.5:1.5b"),
-    "POORJEV_CALIBRATOR": str(WS / "results/jev-eval/qwen2.5-1.5b/calibrator.json"),
+    "POORJEV_CALIBRATOR": str(WS / "results/djaevin-eval/qwen2.5-1.5b/calibrator.json"),
 }
 
 
@@ -114,9 +114,9 @@ def norm_title(t: str) -> str:
     return re.sub(r"[^a-z0-9]", "", t.lower())[:60]
 
 
-# ------------------------------------------------------------------- Jevin
+# ------------------------------------------------------------------- Djævin
 
-class JevinJudge:
+class DjævinJudge:
     """Cliente stdio mínimo para `poorjev serve` (tool judge). Fail-open."""
 
     def __init__(self):
@@ -125,9 +125,9 @@ class JevinJudge:
         self.available = False
         try:
             self.proc = subprocess.Popen(
-                [str(JEV_PYTHON), "-m", "poorjev.cli", "serve"],
+                [str(DJAEVIN_PYTHON), "-m", "poorjev.cli", "serve"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, text=True, env=JEV_ENV, cwd=str(WS))
+                stderr=subprocess.DEVNULL, text=True, env=DJAEVIN_ENV, cwd=str(WS))
             self._call("initialize", {
                 "protocolVersion": "2024-11-05", "capabilities": {},
                 "clientInfo": {"name": "session-janitor", "version": "1.0"}})
@@ -147,7 +147,7 @@ class JevinJudge:
         while True:
             line = self.proc.stdout.readline()
             if not line:
-                raise RuntimeError("jevin closed stdout")
+                raise RuntimeError("djævin closed stdout")
             msg = json.loads(line)
             if msg.get("id") == self._id:
                 if "error" in msg:
@@ -155,7 +155,7 @@ class JevinJudge:
                 return msg["result"]
 
     def judge(self, text: str) -> dict | None:
-        """Devolve verdict do Jevin ou None se abstém/indisponível."""
+        """Devolve verdict do Djævin ou None se abstém/indisponível."""
         if not self.available:
             return None
         try:
@@ -274,7 +274,7 @@ def main() -> int:
                     help="executa (sem isto é dry-run)")
     ap.add_argument("--grace-hours", type=float, default=48)
     ap.add_argument("--max-delete", type=int, default=100)
-    ap.add_argument("--no-jevin", action="store_true")
+    ap.add_argument("--no-djævin", action="store_true")
     ap.add_argument("--no-export", action="store_true")
     args = ap.parse_args()
 
@@ -285,14 +285,14 @@ def main() -> int:
 
     auto, judge_cands, kept = classify(rows, keep_ids, keep_re, grace_ts)
 
-    # ---- Jevin julga as ambíguas
+    # ---- Djævin julga as ambíguas
     judge = None
-    judged_del, judged_keep, jevin_down = [], [], 0
-    if judge_cands and not args.no_jevin:
-        judge = JevinJudge()
+    judged_del, judged_keep, djævin_down = [], [], 0
+    if judge_cands and not args.no_djævin:
+        judge = DjævinJudge()
         if not judge.available:
-            print("Jevin indisponível — ambíguas conservadas (fail-open).")
-            jevin_down = len(judge_cands)
+            print("Djævin indisponível — ambíguas conservadas (fail-open).")
+            djævin_down = len(judge_cands)
         else:
             for r in judge_cands:
                 text = f"{r['title']}\n\n{r['prompt']}"
@@ -301,13 +301,13 @@ def main() -> int:
                     judged_keep.append(r)
                 elif v.get("value") is False:
                     judged_del.append(
-                        (r, f"jevin: sem conhecimento durável "
+                        (r, f"djævin: sem conhecimento durável "
                             f"(p={v.get('prob_true')})"))
                 else:
                     judged_keep.append(r)
             judge.close()
     else:
-        judged_keep = judge_cands if args.no_jevin else []
+        judged_keep = judge_cands if args.no_djævin else []
 
     targets = auto + judged_del
     targets = targets[: args.max_delete]
@@ -315,7 +315,7 @@ def main() -> int:
     # ---- relatório do plano
     print(f"{'DRY-RUN' if not args.apply else 'APPLY'} · {len(rows)} sessões · "
           f"graça {args.grace_hours:.0f}h")
-    print(f"  manter: {len(kept) + len(judged_keep) + jevin_down} "
+    print(f"  manter: {len(kept) + len(judged_keep) + djævin_down} "
           f"(allowlist/graça/substantivo + {len(judged_keep)} julgadas úteis)")
     print(f"  apagar: {len(targets)}")
     for r, why in targets:
@@ -386,7 +386,7 @@ def main() -> int:
                          "title": r["title"], "why": w}
                         for r, w in targets],
             "judged_keep": [r["id"] for r in judged_keep],
-            "jevin_down": jevin_down,
+            "djævin_down": djævin_down,
             "pending_locked": list(pending),
             "orphan_locks_removed": len(orphan),
         }, ensure_ascii=False) + "\n")

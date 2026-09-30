@@ -17,7 +17,7 @@ from typing import Any
 DEFAULT_NOISE_PATTERNS = [
     r"judge tool|classif|support_triage|entailment|^\[\d+\]$|^\{\"items\"|"
     r"^billing$|^BLOCKED$|SESSION_OK|echo.*test|sentinel|safe test command|"
-    r"heartbeat-probe|Lista.*(tools|ferramentas).*jev-local|tools MCP.*jev-local",
+    r"heartbeat-probe|Lista.*(tools|ferramentas).*djaevin-local|tools MCP.*djaevin-local",
 ]
 
 # One-shot cycles whose durable knowledge lives elsewhere (slack-brain

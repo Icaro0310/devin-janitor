@@ -7,7 +7,7 @@ files, vacuum only when Devin is closed** — so `sessions.db` and
 
 Ported from `legacy/session-janitor.py` (proven in daily production use on a
 real Devin Desktop install). Semantics preserved; hardcoded paths replaced by
-detection, hardcoded rules replaced by config, and the Jevin-specific judge
+detection, hardcoded rules replaced by config, and the Djævin-specific judge
 replaced by pluggable backends.
 
 ## Stores
