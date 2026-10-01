@@ -70,6 +70,13 @@ override. Protect sessions in `.devin/janitor-keep.json`
 (`{"ids": [...], "title_patterns": [...]}`); tune classification rules via
 `--config file.json`. Full details: [docs/SPEC.md](docs/SPEC.md).
 
+## Platform support
+
+Tested on **Windows and Linux** (`windows-latest` + `ubuntu-latest` in CI).
+Devin's local stores are auto-detected per platform — `%APPDATA%` on
+Windows, `~/.config/devin/` (XDG) on Linux, `~/Library/Application Support/devin/`
+on macOS. Pass an explicit path to override (see Usage).
+
 ## Limitations
 
 - With the default `--judge none`, classification is purely rules-based:

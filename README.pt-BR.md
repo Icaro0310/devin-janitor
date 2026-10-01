@@ -73,6 +73,14 @@ Os paths são auto-detectados por SO (`%APPDATA%\devin`,
 via `--config ficheiro.json`. Detalhes completos:
 [docs/SPEC.md](docs/SPEC.md) (canónico, EN).
 
+## Suporte de plataformas
+
+Testado em **Windows e Linux** (o CI corre em `windows-latest` +
+`ubuntu-latest`). As stores locais do Devin são auto-detetadas por
+plataforma — `%APPDATA%` no Windows, `~/.config/devin/` (XDG) no Linux,
+`~/Library/Application Support/devin/` no macOS. Passa um caminho
+explícito para override (ver Uso).
+
 ## Limitações
 
 - Com o default `--judge none`, a classificação é puramente baseada em
