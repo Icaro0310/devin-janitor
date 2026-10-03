@@ -129,6 +129,29 @@ pip install -e ".[dev]"
 python -m pytest
 ```
 
+## Quando usar
+
+- A sua lista de sessões está a afogar-se em ruído — sessões vazias, probes de automação/eval, ciclos heartbeat de um só disparo, duplicados (~55% das sessões numa instalação real).
+- Você quer limpeza que arquiva primeiro: `--export-cmd` (ex. `devin-history export`) guarda transcrições antes de qualquer coisa ser apagada, e aborta toda a execução se o export falhar.
+- Você quer um plano revistável, não eliminação cega — `run` é dry-run até `--apply`, com classificação em tiers que pode inspecionar via `scan`.
+- Você quer ficheiros bloqueados tratados graciosamente — vão para uma fila pendente para retry em vez de forçar o kill do Devin, e `VACUUM` só corre quando o Devin está fechado.
+
+## Quando NÃO usar
+
+- Você espera que sessões ambíguas sejam julgadas automaticamente — o defeito `--judge none` mantém tudo ambíguo (fail-open); ligue um comando juiz se quiser decisões semânticas.
+- Você precisa de limpar checkpoints, workspaces ou chaves `state.vscdb` — ele só apaga sessões.
+- Você não pode rever um dry-run primeiro — essa revisão é o modelo de segurança, e `--apply` sem ler o plano derrota-o.
+
+## FAQ
+
+**O que é o devin-janitor?** Um gestor de ciclo de vida para os stores de sessões do Devin. Classifica sessões em tiers (ruído seguro vs manter vs ambíguo), exporta transcrições antes de apagar, retenta ficheiros bloqueados através de uma fila pendente, e faz vacuum só quando o Devin está fechado.
+
+**É seguro? Vai apagar trabalho real?** `run` é dry-run por defeito — imprime o plano exato e não escreve nada até `--apply`. A classificação é por regras e fail-open: sessões ambíguas são mantidas a menos que opte por um backend `--judge command:<cmd>`. Proteja sessões específicas em `.devin/janitor-keep.json` e use `--export-cmd` para que nada se perca.
+
+**O que acontece a ficheiros bloqueados ou em uso?** Não são apagados à força. Eliminações bloqueadas vão para uma fila pendente (`devin-janitor pending --list`, `--retry`) e são retentadas mais tarde; `VACUUM` corre apenas quando o Devin está fechado.
+
+**Precisa de um serviço ou modelo externo?** Não. O pipeline por defeito é puramente por regras e totalmente offline — lê os próprios stores do Devin e escreve um audit log local. Um juiz semântico para sessões ambíguas é opt-in via `--judge command:<cmd>` (por exemplo um script ACP poordjaevin).
+
 ## Licença
 
 MIT — vê [LICENSE](LICENSE).
