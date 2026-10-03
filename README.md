@@ -126,6 +126,52 @@ pip install -e ".[dev]"
 python -m pytest
 ```
 
+## When to use this
+
+- Your session list is drowning in noise — empty sessions, automation/eval
+  probes, one-shot heartbeat cycles, duplicates (~55% of sessions on a real
+  install).
+- You want cleanup that archives first: `--export-cmd` (e.g.
+  `devin-history export`) saves transcripts before anything is deleted,
+  and aborts the whole run if the export fails.
+- You want a reviewable plan, not blind deletion — `run` is a dry-run until
+  `--apply`, with tiered classification you can inspect via `scan`.
+- You want locked files handled gracefully — they go to a pending queue for
+  retry instead of force-killing Devin, and `VACUUM` only runs when Devin
+  is closed.
+
+## When NOT to use this
+
+- You expect ambiguous sessions to be auto-judged — the default
+  `--judge none` keeps everything ambiguous (fail-open); plug in a judge
+  command if you want semantic calls.
+- You need to clean checkpoints, workspaces or `state.vscdb` keys — it
+  deletes sessions only.
+- You cannot review a dry-run first — that review is the safety model, and
+  `--apply` without reading the plan defeats it.
+
+## FAQ
+
+**What is devin-janitor?** A lifecycle manager for Devin's session stores.
+It classifies sessions into tiers (safe noise vs keep vs ambiguous),
+exports transcripts before deleting, retries locked files through a
+pending queue, and vacuums only when Devin is closed.
+
+**Is it safe? Will it delete real work?** `run` is a dry-run by default —
+it prints the exact plan and writes nothing until `--apply`. Classification
+is rules-based and fail-open: ambiguous sessions are kept unless you opt
+into a `--judge command:<cmd>` backend. Protect specific sessions in
+`.devin/janitor-keep.json` and use `--export-cmd` so nothing is lost.
+
+**What happens to locked or in-use files?** They are not force-deleted.
+Locked deletions go into a pending queue (`devin-janitor pending --list`,
+`--retry`) and are retried later; `VACUUM` runs only when Devin is closed.
+
+**Does it need an external service or model?** No. The default pipeline is
+purely rules-based and fully offline — it reads Devin's own stores and
+writes a local audit log. A semantic judge for ambiguous sessions is
+opt-in via `--judge command:<cmd>` (for example a poordjaevin ACP script).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
