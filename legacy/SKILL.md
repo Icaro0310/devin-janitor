@@ -48,6 +48,7 @@ Flags: `--grace-hours N` · `--max-delete N` · `--no-djævin` · `--no-export`
   no momento, inúteis depois. O conhecimento durável deles já vive nas
   sessões SLACK-BRAIN, em `heartbeat/state.json`, no vault e nas skills
   `learned-*` — apagar é seguro após export.
-- (2026-09-29) O Djævin fala stdio via `poorjev.cli serve`; para o janitor usa
-  backend `ollama` (não cria sessões Devin novas). O backend `acp` criaria
+- (2026-09-29) O Djævin fala stdio via `poordjaevin serve`; para o janitor usa
+  backend `nli` (local, não cria sessões Devin novas). O backend `acp` criaria
   uma sessão Devin por consulta — a própria poluição que se quer limpar.
+  (O antigo backend Ollama foi removido do ecossistema.)

@@ -77,8 +77,7 @@ fail-open**: unavailable/error/timeout/unclear verdict ⇒ keep.
 | spec                        | behavior                                            |
 |-----------------------------|-----------------------------------------------------|
 | `none` (default)            | abstains on all — purely rules-based, nothing deleted without a tier rule |
-| `ollama[:model[@host]]`     | POST `/api/generate`; default `qwen2.5:1.5b` @ `localhost:11434` |
-| `command:<cmd>`             | JSON payload on stdin; stdout parsed as verdict (`{"keep": bool}` or bare keep/delete token) |
+| `command:<cmd>`             | JSON payload on stdin; stdout parsed as verdict (`{"keep": bool}` or bare keep/delete token). Plug in any local CLI (e.g. a poordjaevin/Devin ACP helper). |
 
 ## Pipeline (`run`)
 

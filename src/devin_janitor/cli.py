@@ -55,6 +55,7 @@ def _row_json(row: SessionRow, tier: str, reason: str) -> dict:
 
 def _add_path_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--data-dir", help="Devin data root (overrides autodetect)")
+    p.add_argument("--config-dir", help="Devin UI config root (overrides autodetect)")
     p.add_argument("--sessions-db", help="explicit path to sessions.db")
     p.add_argument("--acp-dir", help="explicit acp-messages directory")
     p.add_argument("--locks-dir", help="explicit session_locks directory")
@@ -63,6 +64,7 @@ def _add_path_args(p: argparse.ArgumentParser) -> None:
 def _resolve(args: argparse.Namespace):
     return resolve(
         data_dir=args.data_dir,
+        config_dir=args.config_dir,
         sessions_db=args.sessions_db,
         acp_messages_dir=args.acp_dir,
         session_locks_dir=args.locks_dir,
@@ -318,7 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--grace-hours", type=float, default=None)
     p.add_argument("--max-delete", type=int, default=None)
     p.add_argument("--judge", default="none",
-                   help="none|ollama[:model[@host]]|command:<cmd>")
+                   help="none|command:<cmd>")
     p.add_argument("--export-cmd", default=None,
                    help="shell command run BEFORE any deletion; "
                         "non-zero exit aborts the run")

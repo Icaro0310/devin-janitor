@@ -17,7 +17,7 @@ Pipeline (ordem de segurança):
      e são re-tentados em cada corrida.
   4. VACUUM só se o Devin.exe estiver fechado.
 
-Djævin é fail-open: se o backend estiver em baixo (Ollama off etc.), sessões
+Djævin é fail-open: se o backend estiver em baixo, sessões
 ambíguas são CONSERVADAS — nunca apagadas sem veredito.
 
 Uso:
@@ -78,10 +78,10 @@ JUDGE_STATEMENT = (
 DJAEVIN_PYTHON = (WS / "vendor/poorjev/.venv/Scripts/python.exe")
 DJAEVIN_ENV = {
     **os.environ,
-    "POORJEV_BACKEND": os.environ.get("JANITOR_JEV_BACKEND", "ollama"),
-    "OLLAMA_HOST": os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
-    "POORJEV_MODEL": os.environ.get("POORJEV_MODEL", "qwen2.5:1.5b"),
-    "POORJEV_CALIBRATOR": str(WS / "results/djaevin-eval/qwen2.5-1.5b/calibrator.json"),
+    # Legacy/archived: usa o backend local NLI do poordjaevin (offline, sem
+    # serviço externo). O backend Ollama foi removido do ecossistema.
+    "POORJEV_BACKEND": os.environ.get("JANITOR_JEV_BACKEND", "nli"),
+    "POORJEV_CALIBRATOR": str(WS / "results/djaevin-eval/calibrator.json"),
 }
 
 

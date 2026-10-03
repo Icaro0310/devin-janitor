@@ -8,12 +8,12 @@ Specs (``--judge``):
 
 - ``none``           — default. Judges nothing; all JUDGE sessions are kept.
                        Purely rules-based operation, no LLM involved.
-- ``ollama``         — POST the statement + session summary to a local Ollama
-                       endpoint; ``ollama:<model>`` or
-                       ``ollama:<model>@<host>`` to override defaults.
 - ``command:<cmd>``  — pipe a JSON payload to any local CLI; its stdout is
                        parsed as a verdict (``{"keep": bool}`` JSON, or a
-                       bare keep/delete/true/false/yes/no token).
+                       bare keep/delete/true/false/yes/no token). This is the
+                       extension point: wire in poordjaevin, a Devin ACP
+                       helper, or any script you trust — nothing external is
+                       required.
 """
 
 from __future__ import annotations
@@ -21,16 +21,11 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 
 from devin_janitor.inventory import SessionRow
 
-DEFAULT_OLLAMA_HOST = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "qwen2.5:1.5b"
 COMMAND_TIMEOUT_S = 60
-OLLAMA_TIMEOUT_S = 30
 
 
 @dataclass(frozen=True)
@@ -145,57 +140,6 @@ class CommandJudge(Judge):
         return Verdict(keep=keep, reason=proc.stdout.strip()[:200])
 
 
-class OllamaJudge(Judge):
-    """Asks a local Ollama model whether the session holds durable knowledge."""
-
-    name = "ollama"
-
-    def __init__(
-        self,
-        model: str = DEFAULT_OLLAMA_MODEL,
-        host: str = DEFAULT_OLLAMA_HOST,
-        timeout: float = OLLAMA_TIMEOUT_S,
-    ) -> None:
-        self.model = model
-        self.host = host.rstrip("/")
-        self.timeout = timeout
-
-    def available(self) -> bool:
-        try:
-            with urllib.request.urlopen(
-                f"{self.host}/api/tags", timeout=5
-            ) as resp:
-                return resp.status == 200
-        except (urllib.error.URLError, OSError):
-            return False
-
-    def judge(self, session: SessionRow, statement: str) -> Verdict:
-        prompt = (
-            f"{statement}\n\n"
-            "Session transcript (truncated):\n"
-            f"{_session_summary(session)}\n\n"
-            "Answer with exactly one word: KEEP if the statement is true, "
-            "DELETE if it is not."
-        )
-        body = json.dumps(
-            {"model": self.model, "prompt": prompt, "stream": False}
-        ).encode()
-        req = urllib.request.Request(
-            f"{self.host}/api/generate",
-            data=body,
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = json.loads(resp.read().decode())
-        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
-            return Verdict(keep=None, reason=f"ollama unreachable: {exc}")
-        return Verdict(
-            keep=_parse_verdict_text(data.get("response", "")),
-            reason=data.get("response", "").strip()[:200],
-        )
-
-
 def make_judge(spec: str | None) -> Judge:
     """Build a judge backend from a ``--judge`` spec string."""
     spec = (spec or "none").strip()
@@ -203,15 +147,6 @@ def make_judge(spec: str | None) -> Judge:
         return NoneJudge()
     if spec.startswith("command:"):
         return CommandJudge(spec.split(":", 1)[1])
-    if spec.startswith("ollama"):
-        model, host = DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_HOST
-        rest = spec.split(":", 1)[1] if ":" in spec else ""
-        if rest:
-            if "@" in rest:
-                model, host = rest.split("@", 1)
-            else:
-                model = rest
-        return OllamaJudge(model=model or DEFAULT_OLLAMA_MODEL, host=host)
     raise ValueError(
-        f"unknown judge spec {spec!r} — expected none|ollama|command:<cmd>"
+        f"unknown judge spec {spec!r} — expected none|command:<cmd>"
     )

@@ -39,13 +39,17 @@ mantível — adapta esse pipeline; não reinventa a deleção.
   nomes de ficheiros.
 - Exporta os transcripts **antes** de apagar (hook `--export-cmd`; aborta a
   corrida inteira se falhar).
-- **Judge plugável** para sessões ambíguas — `--judge ollama` ou
-  `--judge command:<cmd>` podem consultar um LLM local, mas o default `none`
-  é puramente baseado em regras e conserva tudo o que é ambíguo (fail-open).
+- **Judge plugável** para sessões ambíguas — `--judge command:<cmd>` envia um
+  payload JSON para qualquer CLI local em que confies (ex.: um helper
+  [poordjaevin](https://github.com/Icaro0310/poordjaevin) ou Devin ACP), mas o
+  default `none` é puramente baseado em regras e conserva tudo o que é
+  ambíguo (fail-open). Nenhum modelo ou serviço externo é necessário.
 - Re-tenta deleções bloqueadas via fila pending em vez de matar o Devin à
   força; `VACUUM` só corre com o Devin fechado.
 
 ## Instalação
+
+Requer Python ≥ 3.10 e `pipx`. **Windows (PowerShell):** instale `pipx` com `py -m pip install --user pipx`, execute `py -m pipx ensurepath` e reabra o terminal. **Linux (Debian/Ubuntu):** execute `sudo apt install pipx python3-venv` e `pipx ensurepath`; reabra o terminal. Noutras distribuições Linux, instale `pipx` pelo gestor de pacotes.
 
 ```bash
 pipx install "devin-janitor @ git+https://github.com/Icaro0310/devin-janitor.git"
@@ -60,26 +64,46 @@ devin-janitor scan                 # preview da classificação
 devin-janitor scan --json          # legível por máquina
 devin-janitor run                  # dry-run: mostra o plano exato, não escreve nada
 devin-janitor run --apply          # executa o pipeline
-devin-janitor run --apply --grace-hours 72 --judge ollama \
-    --export-cmd "devin-history export"
+devin-janitor run --apply --grace-hours 72 \
+    --export-cmd "devin-history export"   # receita segura: exporta primeiro
+devin-janitor run --judge "command:python meu_judge.py"  # liga o teu judge
 devin-janitor pending --list       # ficheiros bloqueados em fila de retry
 devin-janitor pending --retry      # re-tenta agora
 ```
 
-Os paths são auto-detectados por SO (`%APPDATA%\devin`,
-`~/Library/Application Support/devin`, `~/.config/devin`); `--data-dir` ou
-`DEVIN_DATA_DIR` sobrepõem. Protege sessões em `.devin/janitor-keep.json`
-(`{"ids": [...], "title_patterns": [...]}`); afina regras de classificação
-via `--config ficheiro.json`. Detalhes completos:
-[docs/SPEC.md](docs/SPEC.md) (canónico, EN).
+Dados de sessão usam `%APPDATA%\devin` no Windows e `$XDG_DATA_HOME/devin`
+(por omissão `~/.local/share/devin`) no Linux. Ficheiros ACP da UI usam
+`$XDG_CONFIG_HOME/Devin` (por omissão `~/.config/Devin`). Sobrepõe com
+`--data-dir`/`DEVIN_DATA_DIR` e `--config-dir`/`DEVIN_CONFIG_DIR`. Protege
+sessões em `.devin/janitor-keep.json`
+(`{"ids": [...], "title_patterns": [...]}`); afina regras via
+`--config ficheiro.json`. Detalhes completos: [docs/SPEC.md](docs/SPEC.md).
+
+## Funciona só com o Devin (modo Devin-only)
+
+O devin-janitor não precisa de nada além do próprio Devin: lê as stores de
+sessão do Devin e escreve apenas um log de auditoria local. Sem VM, sem túnel,
+sem fila de mensagens, sem servidor de modelos. O default `--judge none`
+mantém todo o pipeline baseado em regras e totalmente offline.
+
+Duas ressalvas honestas para máquinas restritas:
+
+- `run` é **dry-run por omissão**; só `--apply` apaga. Previne sempre e
+  considera `--export-cmd "devin-history export"` para arquivar os
+  transcripts antes de remover.
+- Se quiseres um judge semântico para sessões ambíguas, liga um via
+  `--judge command:<cmd>` — um pequeno script a chamar o
+  [poordjaevin](https://github.com/Icaro0310/poordjaevin) com o backend Devin
+  ACP dá-te um judge Devin-native sem infraestrutura extra.
 
 ## Suporte de plataformas
 
 Testado em **Windows e Linux** (o CI corre em `windows-latest` +
-`ubuntu-latest`). As stores locais do Devin são auto-detetadas por
-plataforma — `%APPDATA%` no Windows, `~/.config/devin/` (XDG) no Linux,
-`~/Library/Application Support/devin/` no macOS. Passa um caminho
-explícito para override (ver Uso).
+`ubuntu-latest`). Os dados de sessão usam `%APPDATA%/devin` no Windows e
+`$XDG_DATA_HOME/devin` no Linux (por omissão `~/.local/share/devin`). Os ficheiros
+ACP usam a raiz separada `$XDG_CONFIG_HOME/Devin` no Linux (por omissão
+`~/.config/Devin`). Há overrides explícitos `--data-dir`, `--config-dir`,
+`--sessions-db`, `--acp-dir` e `--locks-dir`.
 
 ## Limitações
 

@@ -5,7 +5,6 @@ from devin_janitor.inventory import SessionRow
 from devin_janitor.judge import (
     CommandJudge,
     NoneJudge,
-    OllamaJudge,
     _parse_verdict_text,
     make_judge,
 )
@@ -28,13 +27,12 @@ def test_none_judge_abstains():
 def test_make_judge_specs():
     assert make_judge(None).name == "none"
     assert make_judge("command:echo keep").name == "command"
-    j = make_judge("ollama:llama3@http://h:1")
-    assert isinstance(j, OllamaJudge)
-    assert j.model == "llama3" and j.host == "http://h:1"
     import pytest
 
     with pytest.raises(ValueError):
         make_judge("bogus")
+    with pytest.raises(ValueError):
+        make_judge("ollama")  # removed backend fails closed
 
 
 def test_command_judge_parses_verdict(tmp_path):
@@ -62,18 +60,6 @@ def test_command_judge_fail_open_on_nonzero_exit():
 
 def test_command_judge_fail_open_on_bad_command():
     j = CommandJudge("definitely-not-a-real-binary-xyz123")
-    v = j.judge(row(), "statement")
-    assert v.keep is None
-
-
-def test_ollama_unavailable_when_no_server():
-    # Nothing should be listening on this port → available() is False
-    j = OllamaJudge(host="http://127.0.0.1:9")
-    assert j.available() is False
-
-
-def test_ollama_judge_fail_open_when_down():
-    j = OllamaJudge(host="http://127.0.0.1:9", timeout=1)
     v = j.judge(row(), "statement")
     assert v.keep is None
 

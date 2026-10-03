@@ -37,13 +37,17 @@ adapts that pipeline; it does not reinvent deletion.
   and `session_locks/` — no guessing at foreign-key graphs or file naming.
 - Exports transcripts **before** deleting (`--export-cmd` hook, aborts the
   whole run on failure).
-- **Pluggable judge** for ambiguous sessions — `--judge ollama` or
-  `--judge command:<cmd>` can ask a local LLM, but the default `none` is
-  purely rules-based and keeps everything ambiguous (fail-open).
+- **Pluggable judge** for ambiguous sessions — `--judge command:<cmd>` pipes a
+  JSON payload to any local CLI you trust (e.g. a
+  [poordjaevin](https://github.com/Icaro0310/poordjaevin) or Devin ACP helper),
+  but the default `none` is purely rules-based and keeps everything ambiguous
+  (fail-open). No external model or service is required.
 - Retries locked deletions via a pending queue instead of force-killing
   Devin; `VACUUM` only runs when Devin is closed.
 
 ## Install
+
+Python ≥ 3.10 and `pipx` are required. **Windows (PowerShell):** install `pipx` with `py -m pip install --user pipx`, run `py -m pipx ensurepath`, then reopen the terminal. **Linux (Debian/Ubuntu):** run `sudo apt install pipx python3-venv` and `pipx ensurepath`; reopen the terminal. Other Linux distributions should install `pipx` using their package manager.
 
 ```bash
 pipx install "devin-janitor @ git+https://github.com/Icaro0310/devin-janitor.git"
@@ -58,24 +62,46 @@ devin-janitor scan                 # classification preview
 devin-janitor scan --json          # machine-readable
 devin-janitor run                  # dry-run: prints the exact plan, writes nothing
 devin-janitor run --apply          # execute the pipeline
-devin-janitor run --apply --grace-hours 72 --judge ollama \
-    --export-cmd "devin-history export"
+devin-janitor run --apply --grace-hours 72 \
+    --export-cmd "devin-history export"   # safe recipe: export first
+devin-janitor run --judge "command:python my_judge.py"   # plug your own judge
 devin-janitor pending --list       # locked files queued for retry
 devin-janitor pending --retry      # retry them now
 ```
 
-Paths auto-detect per OS (`%APPDATA%\devin`, `~/Library/Application
-Support/devin`, `~/.config/devin`); `--data-dir` or `DEVIN_DATA_DIR`
-override. Protect sessions in `.devin/janitor-keep.json`
+Session data defaults to `%APPDATA%\devin` on Windows and
+`$XDG_DATA_HOME/devin` (normally `~/.local/share/devin`) on Linux. UI ACP files
+use `$XDG_CONFIG_HOME/Devin` (normally `~/.config/Devin`). Override with
+`--data-dir`/`DEVIN_DATA_DIR` and `--config-dir`/`DEVIN_CONFIG_DIR`. Protect
+sessions in `.devin/janitor-keep.json`
 (`{"ids": [...], "title_patterns": [...]}`); tune classification rules via
 `--config file.json`. Full details: [docs/SPEC.md](docs/SPEC.md).
+
+## Works with Devin alone (Devin-only mode)
+
+devin-janitor needs nothing but Devin itself: it reads Devin's own session
+stores and writes only a local audit log. No VM, no tunnel, no message queue,
+no model server. The default `--judge none` keeps the whole pipeline
+rules-based and fully offline.
+
+Two honest caveats for restricted machines:
+
+- `run` is a **dry-run by default**; only `--apply` deletes. Always preview
+  first, and consider `--export-cmd "devin-history export"` so transcripts are
+  archived before removal.
+- If you want a semantic judge for ambiguous sessions, plug one in via
+  `--judge command:<cmd>` — a small script calling
+  [poordjaevin](https://github.com/Icaro0310/poordjaevin) with its Devin ACP
+  backend gives you a Devin-native judge with no extra infrastructure.
 
 ## Platform support
 
 Tested on **Windows and Linux** (`windows-latest` + `ubuntu-latest` in CI).
-Devin's local stores are auto-detected per platform — `%APPDATA%` on
-Windows, `~/.config/devin/` (XDG) on Linux, `~/Library/Application Support/devin/`
-on macOS. Pass an explicit path to override (see Usage).
+Session data uses `%APPDATA%/devin` on Windows and `$XDG_DATA_HOME/devin` on
+Linux (default `~/.local/share/devin`). ACP files use the separate
+`$XDG_CONFIG_HOME/Devin` root on Linux (default `~/.config/Devin`). Explicit
+`--data-dir`, `--config-dir`, `--sessions-db`, `--acp-dir`, and `--locks-dir`
+overrides are available.
 
 ## Limitations
 

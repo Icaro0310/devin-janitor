@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`config.py`), unified session inventory over `sessions.db` +
   `acp-messages/` via `devin-internals-spec` (`inventory.py`),
   KEEP/AUTO_DELETE/JUDGE classifier (`tiers.py`), pluggable fail-open
-  judge backends `none|ollama|command:<cmd>` (`judge.py`), pre-delete
+  judge backends `none|command:<cmd>` (`judge.py`), pre-delete
   export hook (`exporter.py`), deletion engine with pending-retry queue,
   orphan-lock pruning and closed-Devin-only VACUUM (`execute.py`), JSONL
   audit log + plan rendering (`report.py`), and the `scan`/`run`/`pending`

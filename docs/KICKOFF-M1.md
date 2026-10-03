@@ -35,10 +35,10 @@ Dep: `"devin-internals-spec @ git+https://github.com/Icaro0310/devin-internals-s
   - AUTO_DELETE: empty sessions, NOISE_RE automation patterns,
     EPHEMERAL_RE cycles, duplicates (keep sibling w/ most activity)
   - JUDGE: weak/ambiguous signals only
-- `judge.py` — **pluggable backend**: `--judge none|ollama|command:<cmd>`.
+- `judge.py` — **pluggable backend**: `--judge none|command:<cmd>`.
   `none` = default → all JUDGE sessions kept (fail-open, same as legacy).
-  `ollama` hits a local endpoint; `command` pipes the statement+summary to
-  any CLI judge. Judge unreachable ⇒ keep.
+  `command` pipes the statement+summary to any CLI judge (e.g. a
+  poordjaevin/Devin-ACP helper). Judge unreachable ⇒ keep.
 - `exporter.py` — optional `--export-cmd` hook run BEFORE any deletion
   (default off; document the devin-history-export recipe). Abort pipeline
   if it fails.
@@ -51,7 +51,7 @@ Dep: `"devin-internals-spec @ git+https://github.com/Icaro0310/devin-internals-s
 ## CLI (dry-run is ALWAYS default)
 
 - `devin-janitor scan [--sessions-db] [--json]` — classification preview.
-- `devin-janitor run [--apply] [--grace-hours N] [--judge none|ollama|...]
+- `devin-janitor run [--apply] [--grace-hours N] [--judge none|command:<cmd>]
   [--export-cmd "..."] [--keep-file <path>] [--pending-file <path>]`
 - `devin-janitor pending [--retry|--list]`
 - `run` without `--apply` prints the exact plan and exits 0.
