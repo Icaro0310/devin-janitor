@@ -3,17 +3,29 @@
 Each applied run appends one JSON object to ``janitor-log.jsonl`` recording
 what was deleted and why — id, tier, reason and judge verdict — so a bad
 classification is always traceable after the fact.
+
+Also hosts the ``report`` subcommand payload: an advisory, read-only
+recoverable-space scan over every store the janitor knows.
 """
 
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
 
-from devin_janitor.inventory import SessionRow
-from devin_janitor.tiers import Classification
+from devin_internals.schema import SchemaError
+
+from devin_janitor.config import JanitorConfig
+from devin_janitor.inventory import (
+    SessionRow,
+    live_session_ids,
+    load_inventory,
+)
+from devin_janitor.paths import DevinPaths
+from devin_janitor.tiers import Classification, classify
 
 
 def audit_entry(
@@ -119,3 +131,420 @@ def run_summary(
         f"deleted: {cli_rows} CLI rows + {gui_sessions} GUI sessions · "
         f"orphan locks: {orphan_locks} · pending (locked): {pending} · {vacuum}"
     )
+
+
+# ------------------------------------------------------- space report ----
+
+_SESSION_ROW_BYTES = 256  # estimate for the sessions-table row itself
+
+# Payload columns summed per session for the recoverable estimate; tables
+# absent in older schemas are skipped. ``subagent_heads`` has no blob column,
+# so it contributes a fixed per-row estimate.
+_SIZE_QUERIES = (
+    ("message_nodes", "LENGTH(chat_message)"),
+    ("tool_call_state",
+     "LENGTH(tool_call_json) + LENGTH(tool_call_update_json)"),
+    ("rendered_commits", "LENGTH(rendered_html)"),
+    ("prompt_history", "LENGTH(content)"),
+    ("subagent_heads", "64"),
+)
+
+_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+
+def fmt_bytes(n: float) -> str:
+    """``812`` → ``'812 B'``; ``2097152`` → ``'2.0 MB'``."""
+    size = float(max(0, n))
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{int(size)} B" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def _size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _sidecar_bytes(path: Path) -> int:
+    """``x.db`` → bytes of ``x.db-wal``/``x.db-shm``/``x.db-journal``."""
+    if not path.parent.is_dir():
+        return 0
+    return sum(
+        _size(p) for p in path.parent.glob(f"{path.name}-*") if p.is_file()
+    )
+
+
+def _span(values) -> tuple[float | None, float | None]:
+    vals = [v for v in values if v]
+    return (min(vals), max(vals)) if vals else (None, None)
+
+
+def _connect_ro(path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+
+
+def _session_byte_estimates(db_path: Path) -> dict[str, int]:
+    """Rough payload bytes per session — what delete+VACUUM would reclaim."""
+    sizes: dict[str, int] = {}
+    try:
+        con = _connect_ro(db_path)
+    except sqlite3.Error:
+        return sizes
+    try:
+        try:
+            for (sid,) in con.execute("SELECT id FROM sessions"):
+                sizes[str(sid)] = _SESSION_ROW_BYTES
+        except sqlite3.Error:
+            return sizes
+        for table, expr in _SIZE_QUERIES:
+            try:
+                for sid, n in con.execute(
+                    f"SELECT session_id, COALESCE(SUM({expr}), 0)"
+                    f" FROM {table} GROUP BY session_id"
+                ):
+                    sizes[str(sid)] = sizes.get(str(sid), 0) + int(n or 0)
+            except sqlite3.Error:
+                continue
+    finally:
+        con.close()
+    return sizes
+
+
+def _sessions_db_entry(
+    paths: DevinPaths,
+    rows: list[SessionRow],
+    classification: Classification | None,
+    deletable: set[str],
+) -> dict:
+    db = paths.sessions_db
+    sidecars = _sidecar_bytes(db)
+    cli_rows = [r for r in rows if r.origin == "cli"]
+    oldest, newest = _span(
+        t for r in cli_rows for t in (r.created, r.last_activity)
+    )
+    entry = {
+        "name": "sessions.db",
+        "path": str(db),
+        "exists": db.is_file(),
+        "bytes": _size(db) + sidecars,
+        "sidecar_bytes": sidecars,
+        "sessions": len(cli_rows),
+        "oldest": oldest,
+        "newest": newest,
+        "deletable_sessions": 0,
+        "recoverable_bytes": 0,
+        "note": f"{len(cli_rows)} sessions",
+        "recoverable_why": "auto_delete rows reclaimed by vacuum + "
+                           "WAL sidecars truncated by checkpoint",
+    }
+    if classification is None or not db.is_file():
+        # schema unreadable → the vacuum gate fails → nothing is freed
+        return entry
+    est = _session_byte_estimates(db)
+    tier_of = {sid: "keep" for sid in classification.kept}
+    tier_of.update(
+        {r.id: "auto_delete" for r, _ in classification.auto_delete}
+    )
+    tier_of.update({r.id: "judge" for r in classification.judge})
+    by_tier = {"keep": 0, "auto_delete": 0, "judge": 0}
+    for sid, n in est.items():
+        by_tier[tier_of.get(sid, "keep")] += n
+    deletable_cli = deletable & set(est)
+    entry.update(
+        {
+            "est_bytes_by_tier": by_tier,
+            "deletable_sessions": len(deletable_cli),
+            "recoverable_bytes": sum(est[sid] for sid in deletable_cli)
+            + sidecars,
+            "note": f"{len(cli_rows)} sessions · "
+                    f"{len(deletable_cli)} deletable"
+                    + (f" · sidecars {fmt_bytes(sidecars)}"
+                       if sidecars else ""),
+        }
+    )
+    return entry
+
+
+def _acp_entry(paths: DevinPaths, deletable: set[str]) -> dict:
+    acp = paths.acp_messages_dir
+    dbs = sorted(acp.glob("*.db")) if acp.is_dir() else []
+    seen: set[str] = set()
+    files = []
+    total = rec = 0
+    for f in dbs:
+        sid = f.name[:-3]
+        seen.add(sid)
+        size = _size(f) + _sidecar_bytes(f) + _size(acp / f"{sid}.lock")
+        is_del = sid in deletable
+        total += size
+        if is_del:
+            rec += size
+        files.append(
+            {
+                "path": str(f),
+                "session_id": sid,
+                "bytes": size,
+                "deletable": is_del,
+            }
+        )
+    # leftovers of already-deleted sessions: <sid>.db-* sidecars or
+    # <sid>.lock with no <sid>.db — freed when the pending queue retries
+    # their id; anything else is reported but out of the janitor's reach
+    orphan_files = []
+    orphan_rec = 0
+    if acp.is_dir():
+        for p in sorted(acp.iterdir()):
+            if not p.is_file() or p.name.endswith(".db"):
+                continue
+            sid = None
+            for suffix in _SIDECAR_SUFFIXES:
+                if p.name.endswith(f".db{suffix}"):
+                    sid = p.name[: -len(f".db{suffix}")]
+            if sid is None and p.name.endswith(".lock"):
+                sid = p.name[: -len(".lock")]
+            if sid is None or sid in seen:
+                continue
+            size = _size(p)
+            if sid in deletable:
+                orphan_rec += size
+            orphan_files.append(
+                {
+                    "path": str(p),
+                    "session_id": sid,
+                    "bytes": size,
+                    "deletable": sid in deletable,
+                }
+            )
+            total += size
+    oldest, newest = _span(_mtime(f) for f in dbs)
+    n_del = sum(1 for f in files if f["deletable"])
+    return {
+        "name": "acp-messages",
+        "path": str(acp),
+        "exists": acp.is_dir(),
+        "bytes": total,
+        "files": len(dbs),
+        "deletable_files": n_del,
+        "oldest": oldest,
+        "newest": newest,
+        "recoverable_bytes": rec + orphan_rec,
+        "unmanaged_bytes": sum(
+            f["bytes"] for f in orphan_files if not f["deletable"]
+        ),
+        "note": f"{len(dbs)} db{'s' if len(dbs) != 1 else ''} · "
+                f"{n_del} deletable"
+                + (f" · {len(orphan_files)} leftovers"
+                   if orphan_files else ""),
+        "recoverable_why": "deletable sessions' <id>.db*/<id>.lock files",
+        "detail": files + orphan_files,
+    }
+
+
+def _vscdb_entry(paths: DevinPaths) -> dict:
+    db = paths.acp_messages_dir.parent / "globalStorage" / "state.vscdb"
+    items = None
+    if db.is_file():
+        try:
+            con = _connect_ro(db)
+            try:
+                items = con.execute(
+                    "SELECT COUNT(*) FROM ItemTable"
+                ).fetchone()[0]
+            finally:
+                con.close()
+        except sqlite3.Error:
+            items = None
+    return {
+        "name": "state.vscdb",
+        "path": str(db),
+        "exists": db.is_file(),
+        "bytes": _size(db) + _sidecar_bytes(db),
+        "items": items,
+        "oldest": None,
+        "newest": _mtime(db) if db.is_file() else None,
+        "recoverable_bytes": 0,
+        "note": f"{items} keys" if items is not None else "",
+        "recoverable_why": "untouched — the janitor deletes sessions only",
+    }
+
+
+def _locks_entry(paths: DevinPaths) -> dict:
+    locks_dir = paths.session_locks_dir
+    locks = sorted(locks_dir.glob("*.lock")) if locks_dir.is_dir() else []
+    try:
+        live: set[str] | None = live_session_ids(paths)
+    except (SchemaError, sqlite3.Error, OSError):
+        live = None  # unreadable store → fail-safe: no lock counts as orphan
+    files = []
+    total = rec = 0
+    for lock in locks:
+        orphan = live is not None and lock.stem not in live
+        size = _size(lock)
+        total += size
+        if orphan:
+            rec += size
+        files.append({"path": str(lock), "bytes": size, "orphan": orphan})
+    oldest, newest = _span(_mtime(f) for f in locks)
+    n_orphan = sum(1 for f in files if f["orphan"])
+    return {
+        "name": "session_locks",
+        "path": str(locks_dir),
+        "exists": locks_dir.is_dir(),
+        "bytes": total,
+        "locks": len(locks),
+        "orphan_locks": n_orphan,
+        "oldest": oldest,
+        "newest": newest,
+        "recoverable_bytes": rec,
+        "note": f"{len(locks)} lock{'s' if len(locks) != 1 else ''} · "
+                f"{n_orphan} orphan",
+        "recoverable_why": "orphan locks pruned on each run",
+        "detail": files,
+    }
+
+
+def space_report(
+    paths: DevinPaths,
+    config: JanitorConfig | None = None,
+    *,
+    keep_ids: set[str] | None = None,
+    keep_patterns: list[str] | None = None,
+    extra_delete_ids: set[str] | None = None,
+    now: float | None = None,
+) -> dict:
+    """Recoverable-space report across every store the janitor manages.
+
+    Advisory only — reads everything, writes nothing. Recoverable bytes are
+    what the janitor's own rules would free: AUTO_DELETE sessions (plus
+    ``extra_delete_ids`` for judge verdicts / pending-queue ids), sqlite
+    sidecars of deleted stores, orphan session locks, and the sessions.db
+    WAL that ``wal_checkpoint(TRUNCATE)`` reclaims during a safe vacuum.
+    """
+    cfg = config or JanitorConfig()
+    rows: list[SessionRow] = []
+    classification: Classification | None = None
+    error = None
+    try:
+        rows = load_inventory(paths)
+        classification = classify(
+            rows,
+            cfg,
+            keep_ids=keep_ids or set(),
+            keep_patterns=keep_patterns or [],
+            now=now,
+        )
+    except (SchemaError, sqlite3.Error, OSError) as exc:
+        error = str(exc)
+
+    deletable = set(extra_delete_ids or ())
+    if classification is not None:
+        deletable.update(r.id for r, _ in classification.auto_delete)
+
+    stores = []
+    for name, builder in (
+        ("sessions.db", lambda: _sessions_db_entry(
+            paths, rows, classification, deletable)),
+        ("acp-messages", lambda: _acp_entry(paths, deletable)),
+        ("state.vscdb", lambda: _vscdb_entry(paths)),
+        ("session_locks", lambda: _locks_entry(paths)),
+    ):
+        try:
+            stores.append(builder())
+        except (SchemaError, sqlite3.Error, OSError) as exc:
+            stores.append(
+                {
+                    "name": name,
+                    "path": "",
+                    "exists": False,
+                    "bytes": 0,
+                    "recoverable_bytes": 0,
+                    "error": str(exc),
+                }
+            )
+    report = {
+        "generated_at": int(now if now is not None else time.time()),
+        "data_root": str(paths.root),
+        "classification": (
+            {**classification.summary(), "sessions": len(rows)}
+            if classification is not None
+            else None
+        ),
+        "stores": stores,
+        "totals": {
+            "bytes": sum(s["bytes"] for s in stores),
+            "recoverable_bytes": sum(
+                s["recoverable_bytes"] for s in stores
+            ),
+        },
+    }
+    if error:
+        report["classification_error"] = error
+    return report
+
+
+def _fmt_span(oldest: float | None, newest: float | None) -> str:
+    if oldest is None and newest is None:
+        return "-"
+    a = (
+        datetime.fromtimestamp(oldest).strftime("%Y-%m-%d")
+        if oldest
+        else ""
+    )
+    b = (
+        datetime.fromtimestamp(newest).strftime("%Y-%m-%d")
+        if newest
+        else ""
+    )
+    if not a or a == b:
+        return b or a
+    return f"{a} → {b}"
+
+
+def render_space_report(report: dict) -> str:
+    """Human-readable table for ``devin-janitor report``."""
+    totals = report["totals"]
+    lines = [
+        f"REPORT · {fmt_bytes(totals['bytes'])} across "
+        f"{len(report['stores'])} stores · "
+        f"~{fmt_bytes(totals['recoverable_bytes'])} recoverable",
+        "",
+    ]
+    for s in report["stores"]:
+        if not s["exists"]:
+            tag = f"error: {s['error']}" if s.get("error") else "missing"
+            lines.append(f"  {s['name']:<15} {'—':>9}  {tag}  {s['path']}")
+            continue
+        rec = s["recoverable_bytes"]
+        rec_s = f"~{fmt_bytes(rec)}" if rec else "0 B"
+        note = f"  {s['note']}" if s.get("note") else ""
+        lines.append(
+            f"  {s['name']:<15} {fmt_bytes(s['bytes']):>9}  "
+            f"{_fmt_span(s.get('oldest'), s.get('newest')):<23} "
+            f"{rec_s:>9}{note}"
+        )
+    cls = report.get("classification")
+    if cls is not None:
+        lines.append("")
+        lines.append(
+            f"  sessions: {cls['sessions']} · keep {cls['keep']} · "
+            f"auto_delete {cls['auto_delete']} · judge {cls['judge']}"
+        )
+    if report.get("classification_error"):
+        lines.append("")
+        lines.append(
+            f"  classification error: {report['classification_error']}"
+        )
+    lines.append("")
+    lines.append("(advisory — nothing is written; `run` frees it)")
+    return "\n".join(lines)

@@ -75,6 +75,8 @@ devin-janitor run --apply --grace-hours 72 \
 devin-janitor run --judge "command:python meu_judge.py"  # liga o teu judge
 devin-janitor pending --list       # ficheiros bloqueados em fila de retry
 devin-janitor pending --retry      # re-tenta agora
+devin-janitor report               # relatório de espaço recuperável (consultivo)
+devin-janitor report --json        # legível por máquina
 ```
 
 Dados de sessão usam `%APPDATA%\devin` no Windows e `$XDG_DATA_HOME/devin`
@@ -83,7 +85,10 @@ Dados de sessão usam `%APPDATA%\devin` no Windows e `$XDG_DATA_HOME/devin`
 `--data-dir`/`DEVIN_DATA_DIR` e `--config-dir`/`DEVIN_CONFIG_DIR`. Protege
 sessões em `.devin/janitor-keep.json`
 (`{"ids": [...], "title_patterns": [...]}`); afina regras via
-`--config ficheiro.json`. Detalhes completos: [docs/SPEC.md](docs/SPEC.md).
+`--config ficheiro.json`. `report` lê todas as stores (`sessions.db`,
+`acp-messages/`, `state.vscdb`, `session_locks/`) e estima o que as regras
+do janitor libertariam — nunca escreve e sai sempre com código 0. Detalhes
+completos: [docs/SPEC.md](docs/SPEC.md).
 
 ## Funciona só com o Devin (modo Devin-only)
 

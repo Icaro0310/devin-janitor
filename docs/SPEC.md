@@ -110,10 +110,21 @@ devin-janitor run  [path flags...] [--config F] [--grace-hours N]
                    [--keep-file F] [--pending-file F] [--log-file F]
                    [--apply]
 devin-janitor pending [path flags...] [--pending-file F] [--list] [--retry]
+devin-janitor report  [path flags...] [--config F] [--keep-file F]
+                      [--pending-file F] [--grace-hours N] [--judge SPEC]
+                      [--json]
 ```
 
 Dry-run is always the default. `run` without `--apply` prints the exact plan
 and exits 0 without writing anything (no db writes, no pending file, no log).
+
+`report` is advisory: it exits 0 always, writes nothing, and estimates
+recoverable bytes from the same classification rules as `run` —
+AUTO_DELETE + judged deletes + pending-queue ids, the `-wal`/`-shm` sidecars
+that a safe vacuum truncates, stale acp-messages leftovers, and orphan
+`session_locks/*.lock`. `state.vscdb` is reported for size only (the janitor
+never touches it). Per-session byte figures are payload estimates
+(`SUM(LENGTH(...))` per message table), not exact page accounting.
 
 ## Safety invariants
 

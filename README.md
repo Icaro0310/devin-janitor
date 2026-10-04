@@ -73,6 +73,8 @@ devin-janitor run --apply --grace-hours 72 \
 devin-janitor run --judge "command:python my_judge.py"   # plug your own judge
 devin-janitor pending --list       # locked files queued for retry
 devin-janitor pending --retry      # retry them now
+devin-janitor report               # recoverable-space report (advisory)
+devin-janitor report --json        # machine-readable
 ```
 
 Session data defaults to `%APPDATA%\devin` on Windows and
@@ -81,7 +83,10 @@ use `$XDG_CONFIG_HOME/Devin` (normally `~/.config/Devin`). Override with
 `--data-dir`/`DEVIN_DATA_DIR` and `--config-dir`/`DEVIN_CONFIG_DIR`. Protect
 sessions in `.devin/janitor-keep.json`
 (`{"ids": [...], "title_patterns": [...]}`); tune classification rules via
-`--config file.json`. Full details: [docs/SPEC.md](docs/SPEC.md).
+`--config file.json`. `report` reads every store (`sessions.db`,
+`acp-messages/`, `state.vscdb`, `session_locks/`) and estimates what the
+janitor's own rules would free — it never writes and always exits 0. Full
+details: [docs/SPEC.md](docs/SPEC.md).
 
 ## Works with Devin alone (Devin-only mode)
 

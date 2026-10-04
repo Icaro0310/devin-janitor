@@ -17,6 +17,7 @@ devin-janitor solves the problem that daily Devin Desktop use accumulates sessio
 - `devin-janitor run --apply --grace-hours 72 --export-cmd "devin-history export"`: safe recipe — archive transcripts, then delete safe tiers
 - `devin-janitor run --judge "command:python my_judge.py"`: plug in your own judge for ambiguous sessions (default `none` is rules-only, fail-open)
 - `devin-janitor pending --list` / `devin-janitor pending --retry`: inspect or retry locked deletions queued for later
+- `devin-janitor report`: advisory recoverable-space report across all stores (`--json` for machine-readable); read-only, always exits 0
 
 ## When to use / when not
 

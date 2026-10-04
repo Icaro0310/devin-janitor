@@ -5,16 +5,20 @@ Subcommands:
 - ``scan``    classification preview (``--json`` for machines)
 - ``run``     the safety pipeline; dry-run unless ``--apply``
 - ``pending`` inspect/retry the locked-files retry queue
+- ``report``  recoverable-space report; advisory, always exits 0
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
+
+from devin_internals.schema import SchemaError
 
 from devin_janitor.config import JanitorConfig
 from devin_janitor.execute import (
@@ -37,7 +41,9 @@ from devin_janitor.report import (
     append_log,
     audit_entry,
     plan_summary,
+    render_space_report,
     run_summary,
+    space_report,
 )
 from devin_janitor.tiers import Tier, classify, load_keep_file
 
@@ -289,6 +295,53 @@ def cmd_pending(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------- report --
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    paths = _resolve(args)
+    cfg = JanitorConfig.load(args.config)
+    if args.grace_hours is not None:
+        cfg.grace_hours = args.grace_hours
+    keep_ids, keep_patterns = load_keep_file(args.keep_file)
+    pending = load_pending(args.pending_file)
+
+    extra_ids = set(pending)
+    if args.judge != "none":
+        try:
+            rows = load_inventory(paths)
+            cls = classify(
+                rows, cfg, keep_ids=keep_ids, keep_patterns=keep_patterns
+            )
+            judged_delete, _, _, _ = _judge_sessions(
+                args.judge, cls.judge, cfg.judge_statement
+            )
+            extra_ids.update(r.id for r, _ in judged_delete)
+        except (SchemaError, sqlite3.Error, OSError):
+            pass  # advisory — recoverable estimate just stays conservative
+
+    try:
+        rep = space_report(
+            paths,
+            cfg,
+            keep_ids=keep_ids,
+            keep_patterns=keep_patterns,
+            extra_delete_ids=extra_ids,
+        )
+    except Exception as exc:  # advisory — must never fail the command
+        rep = {
+            "stores": [],
+            "totals": {"bytes": 0, "recoverable_bytes": 0},
+            "classification": None,
+            "classification_error": str(exc),
+        }
+    if args.json:
+        print(json.dumps(rep, indent=2, ensure_ascii=False))
+    else:
+        print(render_space_report(rep))
+    return 0
+
+
 # ------------------------------------------------------------------ main --
 
 
@@ -336,6 +389,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--retry", action="store_true",
                    help="retry queued gui-file deletions")
     p.set_defaults(func=cmd_pending)
+
+    p = sub.add_parser(
+        "report", help="recoverable-space report (advisory, read-only)"
+    )
+    _add_path_args(p)
+    p.add_argument("--config", help="JSON config overriding tier rules")
+    p.add_argument("--keep-file", default=DEFAULT_KEEP_FILE)
+    p.add_argument("--pending-file", default=DEFAULT_PENDING_FILE)
+    p.add_argument("--grace-hours", type=float, default=None)
+    p.add_argument("--judge", default="none", help="none|command:<cmd>")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_report)
 
     return parser
 

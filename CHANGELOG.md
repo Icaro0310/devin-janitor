@@ -21,3 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audit log + plan rendering (`report.py`), and the `scan`/`run`/`pending`
   CLI (`cli.py`) — dry-run by default.
 - `docs/SPEC.md` (canonical EN), bilingual READMEs, STATUS.md.
+- `devin-janitor report`: advisory recoverable-space report over
+  `sessions.db`, `acp-messages/`, `state.vscdb` and `session_locks/` —
+  per-store bytes, age span and estimated recoverable bytes from the
+  janitor's own rules; `--json`, optional `--judge`, always exits 0.
