@@ -75,7 +75,50 @@ devin-janitor pending --list       # locked files queued for retry
 devin-janitor pending --retry      # retry them now
 devin-janitor report               # recoverable-space report (advisory)
 devin-janitor report --json        # machine-readable
+devin-janitor report --exclude-labeled    # drop bridge-labeled sessions from the counts
+devin-janitor run --apply --tiers 1,2     # default scope: orphans/cache + stale sessions
+devin-janitor run --apply --tiers all --include-gui \
+    --snapshot /path/to/devin-backup-snapshot   # tier3 requires a fresh verified snapshot
+devin-janitor install --daily      # schedule a daily read-only 'report' job (F6)
 ```
+
+### Cleanup tiers
+
+Everything the janitor can reclaim falls into three tiers, reported per-tier
+by `report` and selectable via `run --tiers`:
+
+- **tier1 — orphans & cache** (default): checkpoint sidecars, message-table
+  rows whose session is gone, stale `session_locks/*.lock`, dead-session
+  leftovers in `acp-messages/`. No session content is lost.
+- **tier2 — stale sessions** (default): sessions past `--grace-hours` the
+  classifier marks `auto_delete` (plus judge deletes / pending-queue ids).
+- **tier3 — GUI session state** (opt-in): `windsurfSpace.sessionWorkspace/*`
+  keys in `state.vscdb`. Destructive — `run --apply --tiers 3` refuses
+  unless you pass `--include-gui` **and** `--snapshot PATH` pointing at a
+  verified [`devin-backup`](https://github.com/Icaro0310/devin-backup)
+  snapshot manifest younger than 24h that covers `state.vscdb`, and Devin
+  must be closed. `--apply` is never scheduled — deletion stays manual.
+
+### Automatic sessions (bridge labels)
+
+Sessions created by automation (devin-bridge and friends) carry
+`origin:purpose` labels recorded in `<bridge-state>/session-labels.json`.
+`report` reads that sidecar (`--labels-file` to override), lists the
+labeled sessions in an **automatic sessions** section, and marks them
+deterministically — `--exclude-labeled` drops them from the
+classification so the report reflects only non-automation sessions.
+
+### Scheduled daily report
+
+`devin-janitor install --daily` registers a **read-only** daily
+`devin-janitor report` using the F6 scheduling pattern shared across the
+devin-* ecosystem: a tagged `@daily` crontab line
+(`# devin-ecosystem:devin-janitor-daily`), a Task Scheduler entry on
+Windows, or an elapsed-time job record in
+`<config-dir>/.devin-ecosystem/scheduled.json` ticked by the
+`UserPromptSubmit` hook when neither scheduler exists. Pin a backend with
+`--backend auto|tasksch|cron|elapsed`. Only `report` is ever scheduled —
+`--apply` stays a manual decision.
 
 Session data defaults to `%APPDATA%\devin` on Windows and
 `$XDG_DATA_HOME/devin` (normally `~/.local/share/devin`) on Linux. UI ACP files
@@ -121,7 +164,8 @@ overrides are available.
   survives unless you opt into a judge backend.
 - Devin's stores are private internals; schema versions beyond v17 make the
   tool stop loudly rather than misparse.
-- It deletes sessions — not checkpoints, workspaces or `state.vscdb` keys —
+- By default it deletes sessions only — `state.vscdb` GUI keys are tier3,
+  gated behind `--include-gui` + a verified <24h `devin-backup` snapshot —
   and it never touches anything without a dry-run preview first.
 
 ## Development
@@ -150,8 +194,10 @@ python -m pytest
 - You expect ambiguous sessions to be auto-judged — the default
   `--judge none` keeps everything ambiguous (fail-open); plug in a judge
   command if you want semantic calls.
-- You need to clean checkpoints, workspaces or `state.vscdb` keys — it
-  deletes sessions only.
+- You need unattended deletion — only `report` is schedulable
+  (`install --daily`); `--apply` always requires a human in the loop.
+- You want tier3 GUI-state cleanup without a verified `devin-backup`
+  snapshot — the guard refuses on purpose.
 - You cannot review a dry-run first — that review is the safety model, and
   `--apply` without reading the plan defeats it.
 

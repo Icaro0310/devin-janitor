@@ -6,6 +6,7 @@ Subcommands:
 - ``run``     the safety pipeline; dry-run unless ``--apply``
 - ``pending`` inspect/retry the locked-files retry queue
 - ``report``  recoverable-space report; advisory, always exits 0
+- ``install`` schedule a daily ``report`` job (F6 pattern, opt-in)
 """
 
 from __future__ import annotations
@@ -13,16 +14,29 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import subprocess
 import sys
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
 from devin_internals.schema import SchemaError
 
+from devin_janitor.cleanup import (
+    TIER1,
+    TIER2,
+    TIER3,
+    CleanupRefused,
+    apply_tier1,
+    apply_tier3,
+    parse_tiers,
+    verify_snapshot,
+)
 from devin_janitor.config import JanitorConfig
 from devin_janitor.execute import (
     apply_deletions,
+    devin_running,
     load_pending,
     remove_orphan_locks,
     retry_pending,
@@ -191,10 +205,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         cfg.grace_hours = args.grace_hours
     if args.max_delete is not None:
         cfg.max_delete = args.max_delete
+    tiers = parse_tiers(args.tiers)  # ValueError → rc 2 via main()
     keep_ids, keep_patterns = load_keep_file(args.keep_file)
     pending = load_pending(args.pending_file)
 
-    if not paths.sessions_db.is_file():
+    if not paths.sessions_db.is_file() and tiers & {TIER1, TIER2}:
         print(f"error: no sessions.db at {paths.sessions_db}", file=sys.stderr)
         return 1
 
@@ -212,7 +227,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             "(fail-open)."
         )
 
-    targets = (classification.auto_delete + judged_delete)[: cfg.max_delete]
+    targets = (
+        (classification.auto_delete + judged_delete)[: cfg.max_delete]
+        if TIER2 in tiers
+        else []
+    )
     n_auto = min(len(classification.auto_delete), len(targets))
 
     print(
@@ -227,41 +246,96 @@ def cmd_run(args: argparse.Namespace) -> int:
             targets=targets,
         )
     )
+    if TIER3 in tiers:
+        print(
+            "  tier3 (gui state in state.vscdb): gated — needs "
+            "--include-gui + a verified --snapshot manifest (<24h old)"
+        )
 
-    if not args.apply or not targets:
+    if not args.apply:
         return 0
+
+    # 0. tier3 gate — every check runs before the first write
+    if TIER3 in tiers:
+        if not args.include_gui:
+            print(
+                "error: tier3 deletes GUI session state — pass "
+                "--include-gui to confirm",
+                file=sys.stderr,
+            )
+            return 2
+        snap = verify_snapshot(args.snapshot)
+        if not snap["ok"]:
+            print(
+                f"error: tier3 refused — {snap['reason']}",
+                file=sys.stderr,
+            )
+            return 4
+        if devin_running():
+            print(
+                "error: tier3 refused — Devin appears to be running; "
+                "state.vscdb is only written when the GUI is closed",
+                file=sys.stderr,
+            )
+            return 4
 
     # 1. export first — abort before deleting if the hook fails
     try:
-        if args.export_cmd:
+        if args.export_cmd and targets:
             print("\n== export ==")
             run_export(args.export_cmd)
     except ExportError as exc:
         print(f"export failed — aborting: {exc}", file=sys.stderr)
         return 3
 
-    # 2. delete
-    print("== delete ==")
-    stats = apply_deletions(paths, targets, pending)
+    # 2. tier2: session deletions (skipped when tier2 not selected)
+    stats = {"cli_rows": 0, "gui_sessions": 0, "still_locked": len(pending)}
+    if targets:
+        print("== delete ==")
+        stats = apply_deletions(paths, targets, pending)
 
-    # 3. orphan locks + vacuum (only when Devin is closed)
-    orphan = remove_orphan_locks(paths, live_session_ids(paths))
-    vacuumed = vacuum_if_safe(paths)
+    # 3. tier1: orphan rows + dead-session leftovers + orphan locks;
+    #    vacuum reclaims the sidecars (only when Devin is closed)
+    tier1_stats = None
+    orphan = 0
+    vacuumed = False
+    if TIER1 in tiers:
+        live = live_session_ids(paths)
+        tier1_stats = apply_tier1(paths, live, skip=set(pending))
+        orphan = remove_orphan_locks(paths, live)
+        vacuumed = vacuum_if_safe(paths)
 
-    # 4. audit log + pending queue
-    append_log(
-        args.log_file,
-        audit_entry(
-            deleted=targets[:n_auto],
-            judged_keep=judged_keep,
-            judged_delete=targets[n_auto:],
-            judge_name=judge_name,
-            judge_down=judge_down,
-            pending_locked=list(pending),
-            orphan_locks_removed=orphan,
-            vacuumed=vacuumed,
-        ),
+    # 4. tier3: stale GUI session-state keys (gates already verified)
+    tier3_stats = None
+    if TIER3 in tiers:
+        try:
+            tier3_stats = apply_tier3(
+                paths,
+                stale_before=time.time() - cfg.grace_hours * 3600,
+                include_gui=True,
+                snapshot=args.snapshot,
+            )
+        except CleanupRefused as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 4
+
+    # 5. audit log + pending queue
+    entry = audit_entry(
+        deleted=targets[:n_auto],
+        judged_keep=judged_keep,
+        judged_delete=targets[n_auto:],
+        judge_name=judge_name,
+        judge_down=judge_down,
+        pending_locked=list(pending),
+        orphan_locks_removed=orphan,
+        vacuumed=vacuumed,
     )
+    entry["tiers"] = sorted(tiers)
+    if tier1_stats:
+        entry["tier1"] = tier1_stats
+    if tier3_stats is not None:
+        entry["tier3"] = tier3_stats
+    append_log(args.log_file, entry)
     save_pending(args.pending_file, pending)
 
     print()
@@ -274,6 +348,16 @@ def cmd_run(args: argparse.Namespace) -> int:
             vacuumed=vacuumed,
         )
     )
+    if tier1_stats:
+        print(
+            f"tier1: {tier1_stats['orphan_rows']} orphan rows · "
+            f"{tier1_stats['leftover_files']} leftover files"
+        )
+    if tier3_stats:
+        print(
+            f"tier3: {tier3_stats['keys']} gui state keys removed "
+            f"(snapshot {tier3_stats['snapshot']})"
+        )
     return 0
 
 
@@ -327,6 +411,8 @@ def cmd_report(args: argparse.Namespace) -> int:
             keep_ids=keep_ids,
             keep_patterns=keep_patterns,
             extra_delete_ids=extra_ids,
+            labels_path=args.labels_file,
+            exclude_labeled=args.exclude_labeled,
         )
     except Exception as exc:  # advisory — must never fail the command
         rep = {
@@ -339,6 +425,42 @@ def cmd_report(args: argparse.Namespace) -> int:
         print(json.dumps(rep, indent=2, ensure_ascii=False))
     else:
         print(render_space_report(rep))
+    return 0
+
+
+# --------------------------------------------------------------- install --
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    """JA-1 — register the daily ``report`` job (F6 scheduling pattern).
+
+    ``--daily`` is mandatory and the only schedule offered: the job runs
+    ``devin-janitor report`` (read-only). Deletion is never scheduled —
+    ``--apply`` stays a manual, reviewed decision.
+    """
+    if not args.daily:
+        print(
+            "error: 'install' only schedules the daily report job — "
+            "pass --daily (only 'report' is ever scheduled; --apply stays "
+            "manual)",
+            file=sys.stderr,
+        )
+        return 2
+    from devin_janitor.install import install_daily
+    result = install_daily(config_dir=args.config_dir,
+                           backend=args.backend)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"installed '{result['job']}' [{result['backend']}]")
+        print(f"  command: {result['command']}")
+        print(f"  registry: {result['registry']}")
+        if result["backend"] == "elapsed":
+            print(
+                "  elapsed backend: add 'python tools/schedule.py check "
+                "--run' to a UserPromptSubmit hook (see devin-powerups "
+                "README)"
+            )
     return 0
 
 
@@ -369,6 +491,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_path_args(p)
     p.add_argument("--apply", action="store_true",
                    help="execute (default is dry-run)")
+    p.add_argument("--tiers", default=None,
+                   help="cleanup tiers to apply: '1,2' (default), "
+                        "'1', '2', '3', 'all' — tier3 is always opt-in")
+    p.add_argument("--include-gui", action="store_true",
+                   help="allow tier3 to touch state.vscdb (requires "
+                        "--snapshot too)")
+    p.add_argument("--snapshot", default=None,
+                   help="devin-backup snapshot dir/manifest <24h old — "
+                        "required for tier3")
     p.add_argument("--config", help="JSON config overriding tier rules")
     p.add_argument("--grace-hours", type=float, default=None)
     p.add_argument("--max-delete", type=int, default=None)
@@ -399,8 +530,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pending-file", default=DEFAULT_PENDING_FILE)
     p.add_argument("--grace-hours", type=float, default=None)
     p.add_argument("--judge", default="none", help="none|command:<cmd>")
+    p.add_argument("--labels-file", default=None,
+                   help="bridge session-labels.json override "
+                        "(default: bridge state dir)")
+    p.add_argument("--exclude-labeled", action="store_true",
+                   help="exclude bridge-labeled automatic sessions from "
+                        "the classification")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser(
+        "install", help="schedule a daily 'report' job "
+        "(cron / Task Scheduler / elapsed hook — F6, opt-in)"
+    )
+    p.add_argument("--daily", action="store_true",
+                   help="register the daily 'devin-janitor report' job "
+                        "(required; only reporting is ever scheduled)")
+    p.add_argument("--config-dir", help="Devin config dir override "
+                   "(where .devin-ecosystem/scheduled.json lives)")
+    p.add_argument("--backend", default="auto",
+                   choices=["auto", "tasksch", "cron", "elapsed"])
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_install)
 
     return parser
 
@@ -409,7 +560,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except ValueError as exc:
+    except (ValueError, RuntimeError, OSError,
+            subprocess.CalledProcessError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

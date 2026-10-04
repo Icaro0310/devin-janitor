@@ -18,11 +18,24 @@ from pathlib import Path
 
 from devin_internals.schema import SchemaError
 
+from devin_janitor.cleanup import (
+    SIDECAR_SUFFIXES,
+    _connect_ro,
+    _session_byte_estimates,
+    gui_state_entries,
+    orphan_row_bytes,
+    vscdb_path,
+)
 from devin_janitor.config import JanitorConfig
 from devin_janitor.inventory import (
     SessionRow,
     live_session_ids,
     load_inventory,
+)
+from devin_janitor.labels import (
+    automatic_sessions,
+    default_labels_path,
+    load_labels,
 )
 from devin_janitor.paths import DevinPaths
 from devin_janitor.tiers import Classification, classify
@@ -135,21 +148,7 @@ def run_summary(
 
 # ------------------------------------------------------- space report ----
 
-_SESSION_ROW_BYTES = 256  # estimate for the sessions-table row itself
-
-# Payload columns summed per session for the recoverable estimate; tables
-# absent in older schemas are skipped. ``subagent_heads`` has no blob column,
-# so it contributes a fixed per-row estimate.
-_SIZE_QUERIES = (
-    ("message_nodes", "LENGTH(chat_message)"),
-    ("tool_call_state",
-     "LENGTH(tool_call_json) + LENGTH(tool_call_update_json)"),
-    ("rendered_commits", "LENGTH(rendered_html)"),
-    ("prompt_history", "LENGTH(content)"),
-    ("subagent_heads", "64"),
-)
-
-_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_SIDECAR_SUFFIXES = SIDECAR_SUFFIXES
 
 
 def fmt_bytes(n: float) -> str:
@@ -188,37 +187,6 @@ def _sidecar_bytes(path: Path) -> int:
 def _span(values) -> tuple[float | None, float | None]:
     vals = [v for v in values if v]
     return (min(vals), max(vals)) if vals else (None, None)
-
-
-def _connect_ro(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
-
-
-def _session_byte_estimates(db_path: Path) -> dict[str, int]:
-    """Rough payload bytes per session — what delete+VACUUM would reclaim."""
-    sizes: dict[str, int] = {}
-    try:
-        con = _connect_ro(db_path)
-    except sqlite3.Error:
-        return sizes
-    try:
-        try:
-            for (sid,) in con.execute("SELECT id FROM sessions"):
-                sizes[str(sid)] = _SESSION_ROW_BYTES
-        except sqlite3.Error:
-            return sizes
-        for table, expr in _SIZE_QUERIES:
-            try:
-                for sid, n in con.execute(
-                    f"SELECT session_id, COALESCE(SUM({expr}), 0)"
-                    f" FROM {table} GROUP BY session_id"
-                ):
-                    sizes[str(sid)] = sizes.get(str(sid), 0) + int(n or 0)
-            except sqlite3.Error:
-                continue
-    finally:
-        con.close()
-    return sizes
 
 
 def _sessions_db_entry(
@@ -352,7 +320,7 @@ def _acp_entry(paths: DevinPaths, deletable: set[str]) -> dict:
 
 
 def _vscdb_entry(paths: DevinPaths) -> dict:
-    db = paths.acp_messages_dir.parent / "globalStorage" / "state.vscdb"
+    db = vscdb_path(paths)
     items = None
     if db.is_file():
         try:
@@ -414,6 +382,100 @@ def _locks_entry(paths: DevinPaths) -> dict:
     }
 
 
+def _cleanup_tier_summary(
+    paths: DevinPaths,
+    cfg: JanitorConfig,
+    stores: list[dict],
+    deletable: set[str],
+    now: float | None,
+) -> dict:
+    """Per-tier recoverable bytes (JA-2).
+
+    tier1 — orphans & cache: checkpoint sidecars, orphaned message rows,
+            dead-session leftovers, stale locks. No session content.
+    tier2 — stale sessions: what ``run`` deletes (auto_delete + judged).
+    tier3 — gui state: ``windsurfSpace.sessionWorkspace/*`` keys in
+            ``state.vscdb``; gated behind ``--include-gui`` + snapshot.
+    """
+    by_name = {s["name"]: s for s in stores}
+    sdb = by_name.get("sessions.db", {})
+    acp = by_name.get("acp-messages", {})
+    locks = by_name.get("session_locks", {})
+
+    try:
+        live = live_session_ids(paths)
+    except (SchemaError, sqlite3.Error, OSError):
+        live = set()
+
+    # acp leftovers (<sid>.db-*/<sid>.lock without <sid>.db): a leftover of
+    # a session being deleted is tier2; a dead session's leftover is tier1;
+    # a live session's leftover is managed — not counted as recoverable.
+    leftover_t1_bytes = leftover_t1_n = leftover_t2_n = 0
+    for f in acp.get("detail") or []:
+        if str(f.get("path", "")).endswith(".db"):
+            continue
+        sid = f.get("session_id")
+        if sid in deletable:
+            leftover_t2_n += 1  # bytes already inside acp.recoverable
+        elif sid not in live:
+            leftover_t1_bytes += int(f.get("bytes", 0))
+            leftover_t1_n += 1
+
+    orphan_bytes = orphan_rows = 0
+    if paths.sessions_db.is_file():
+        try:
+            orphan_bytes, orphan_rows = orphan_row_bytes(paths.sessions_db)
+        except (sqlite3.Error, OSError):
+            pass
+
+    stale_before = (
+        now if now is not None else time.time()
+    ) - cfg.grace_hours * 3600
+    gui = gui_state_entries(vscdb_path(paths), stale_before=stale_before)
+    stale_gui = [e for e in gui if e["stale"]]
+
+    stale_days = cfg.grace_hours / 24
+    return {
+        "tier1": {
+            "label": "orphans & cache",
+            "bytes": (
+                sdb.get("sidecar_bytes", 0)
+                + orphan_bytes
+                + leftover_t1_bytes
+                + locks.get("recoverable_bytes", 0)
+            ),
+            "items": orphan_rows
+            + leftover_t1_n
+            + locks.get("orphan_locks", 0),
+            "why": "checkpoint sidecars, orphaned message rows, stale "
+                   "locks & dead-session leftovers",
+        },
+        "tier2": {
+            "label": "stale sessions",
+            "bytes": max(
+                0,
+                sdb.get("recoverable_bytes", 0)
+                - sdb.get("sidecar_bytes", 0)
+                + acp.get("recoverable_bytes", 0),
+            ),
+            "items": sdb.get("deletable_sessions", 0)
+            + acp.get("deletable_files", 0)
+            + leftover_t2_n,
+            "why": f"sessions past the {stale_days:g}d staleness window "
+                   "(auto_delete + judged deletes)",
+        },
+        "tier3": {
+            "label": "gui state (state.vscdb)",
+            "bytes": sum(e["bytes"] for e in stale_gui),
+            "items": len(stale_gui),
+            "total_items": len(gui),
+            "gated": True,
+            "why": "GUI session state keys — requires --include-gui + a "
+                   "verified devin-backup snapshot <24h old",
+        },
+    }
+
+
 def space_report(
     paths: DevinPaths,
     config: JanitorConfig | None = None,
@@ -422,6 +484,8 @@ def space_report(
     keep_patterns: list[str] | None = None,
     extra_delete_ids: set[str] | None = None,
     now: float | None = None,
+    labels_path: str | Path | None = None,
+    exclude_labeled: bool = False,
 ) -> dict:
     """Recoverable-space report across every store the janitor manages.
 
@@ -430,15 +494,36 @@ def space_report(
     ``extra_delete_ids`` for judge verdicts / pending-queue ids), sqlite
     sidecars of deleted stores, orphan session locks, and the sessions.db
     WAL that ``wal_checkpoint(TRUNCATE)`` reclaims during a safe vacuum.
+
+    Also carries a per-tier cleanup summary (JA-2: orphans & cache /
+    stale sessions / gated GUI state) and an ``automatic_sessions``
+    section (JA-4) marking sessions the bridge sidecar labels as
+    automation-created. ``exclude_labeled`` drops those sessions from the
+    classification so the report reflects only non-automation sessions.
     """
     cfg = config or JanitorConfig()
+    labels_p = (
+        Path(labels_path).expanduser()
+        if labels_path is not None
+        else default_labels_path()
+    )
+    labels = load_labels(labels_p)
+
     rows: list[SessionRow] = []
+    automatic: list[dict] = []
     classification: Classification | None = None
     error = None
     try:
         rows = load_inventory(paths)
+        automatic = automatic_sessions(rows, labels)
+        labeled = {s["id"] for s in automatic}
+        cls_rows = (
+            [r for r in rows if r.id not in labeled]
+            if exclude_labeled
+            else rows
+        )
         classification = classify(
-            rows,
+            cls_rows,
             cfg,
             keep_ids=keep_ids or set(),
             keep_patterns=keep_patterns or [],
@@ -472,6 +557,11 @@ def space_report(
                     "error": str(exc),
                 }
             )
+    try:
+        tiers = _cleanup_tier_summary(paths, cfg, stores, deletable, now)
+    except (SchemaError, sqlite3.Error, OSError) as exc:
+        tiers = {"error": str(exc)}
+
     report = {
         "generated_at": int(now if now is not None else time.time()),
         "data_root": str(paths.root),
@@ -481,6 +571,13 @@ def space_report(
             else None
         ),
         "stores": stores,
+        "cleanup_tiers": tiers,
+        "automatic_sessions": {
+            "labels_file": str(labels_p),
+            "count": len(automatic),
+            "excluded_from_classification": bool(exclude_labeled),
+            "sessions": automatic,
+        },
         "totals": {
             "bytes": sum(s["bytes"] for s in stores),
             "recoverable_bytes": sum(
@@ -540,6 +637,38 @@ def render_space_report(report: dict) -> str:
             f"  sessions: {cls['sessions']} · keep {cls['keep']} · "
             f"auto_delete {cls['auto_delete']} · judge {cls['judge']}"
         )
+    tiers = report.get("cleanup_tiers")
+    if tiers and not tiers.get("error"):
+        lines.append("")
+        lines.append("  cleanup tiers:")
+        for key in ("tier1", "tier2", "tier3"):
+            t = tiers.get(key)
+            if not t:
+                continue
+            gated = " · gated" if t.get("gated") else ""
+            lines.append(
+                f"    {key} {t['label']:<26} "
+                f"{('~' + fmt_bytes(t['bytes'])):>10}  "
+                f"{t['items']} item(s){gated}"
+            )
+    auto = report.get("automatic_sessions") or {}
+    if auto.get("count"):
+        lines.append("")
+        excluded = (
+            "  (excluded from classification)"
+            if auto.get("excluded_from_classification")
+            else ""
+        )
+        lines.append(f"  automatic sessions: {auto['count']}{excluded}")
+        shown = auto.get("sessions") or []
+        for s in shown[:10]:
+            mark = s.get("label") or s.get("origin") or "auto"
+            lines.append(
+                f"    [{mark}] {s['id'][:40]:40} "
+                f"{(s.get('title') or '')[:50]}"
+            )
+        if auto["count"] > len(shown[:10]):
+            lines.append(f"    … and {auto['count'] - 10} more")
     if report.get("classification_error"):
         lines.append("")
         lines.append(

@@ -108,11 +108,14 @@ devin-janitor scan [--data-dir D] [--sessions-db F] [--acp-dir D]
 devin-janitor run  [path flags...] [--config F] [--grace-hours N]
                    [--max-delete N] [--judge SPEC] [--export-cmd CMD]
                    [--keep-file F] [--pending-file F] [--log-file F]
+                   [--tiers 1,2|all] [--include-gui] [--snapshot PATH]
                    [--apply]
 devin-janitor pending [path flags...] [--pending-file F] [--list] [--retry]
 devin-janitor report  [path flags...] [--config F] [--keep-file F]
                       [--pending-file F] [--grace-hours N] [--judge SPEC]
-                      [--json]
+                      [--labels-file F] [--exclude-labeled] [--json]
+devin-janitor install --daily [--config-dir D]
+                      [--backend auto|tasksch|cron|elapsed] [--json]
 ```
 
 Dry-run is always the default. `run` without `--apply` prints the exact plan
@@ -122,9 +125,41 @@ and exits 0 without writing anything (no db writes, no pending file, no log).
 recoverable bytes from the same classification rules as `run` —
 AUTO_DELETE + judged deletes + pending-queue ids, the `-wal`/`-shm` sidecars
 that a safe vacuum truncates, stale acp-messages leftovers, and orphan
-`session_locks/*.lock`. `state.vscdb` is reported for size only (the janitor
-never touches it). Per-session byte figures are payload estimates
+`session_locks/*.lock`. Per-session byte figures are payload estimates
 (`SUM(LENGTH(...))` per message table), not exact page accounting.
+
+## Cleanup tiers (JA-2)
+
+`run --tiers` selects what `--apply` may touch; `report` shows per-tier
+sizes:
+
+- **tier1 — orphans & cache**: `sessions.db` checkpoint sidecars (reclaimed
+  by the safe vacuum), message rows whose session is gone, dead-session
+  `acp-messages` leftovers, orphan locks. No session content.
+- **tier2 — stale sessions** (default with tier1): the auto_delete/judged
+  pipeline above.
+- **tier3 — GUI state** (opt-in): stale `windsurfSpace.sessionWorkspace/*`
+  keys in `state.vscdb`. `--apply` refuses tier3 unless `--include-gui`
+  **and** `--snapshot PATH` verifies a `devin-backup` manifest <24h old
+  covering `state.vscdb` — and Devin must be closed. Refusals exit 4
+  (missing `--include-gui` exits 2).
+
+## Automatic sessions (JA-4)
+
+The bridge sidecar `<bridge-state>/session-labels.json`
+(`DEVIN_BRIDGE_STATE_DIR` or platform default) maps session ids to
+`origin:purpose` labels. `report` lists matching inventory sessions in an
+`automatic_sessions` section (origin `bridge` ⇒ automation); labeling is
+advisory and fail-open. `--labels-file` overrides the sidecar path;
+`--exclude-labeled` excludes labeled sessions from classification.
+
+## Scheduled report (JA-1)
+
+`install --daily` registers a read-only daily `report` via the F6
+scheduling pattern — tagged `@daily` crontab line, a `schtasks` daily
+entry on Windows, or an elapsed job record in
+`<config-dir>/.devin-ecosystem/scheduled.json` ticked by a
+`UserPromptSubmit` hook. `--apply` is never scheduled.
 
 ## Safety invariants
 

@@ -77,7 +77,53 @@ devin-janitor pending --list       # ficheiros bloqueados em fila de retry
 devin-janitor pending --retry      # re-tenta agora
 devin-janitor report               # relatório de espaço recuperável (consultivo)
 devin-janitor report --json        # legível por máquina
+devin-janitor report --exclude-labeled    # tira sessões rotuladas pela bridge das contagens
+devin-janitor run --apply --tiers 1,2     # escopo default: órfãos/cache + sessões velhas
+devin-janitor run --apply --tiers all --include-gui \
+    --snapshot /caminho/para/snapshot-devin-backup   # tier3 exige snapshot verificado e fresco
+devin-janitor install --daily      # agenda um 'report' diário read-only (F6)
 ```
+
+### Tiers de limpeza
+
+Tudo o que o janitor pode recuperar cai em três tiers, mostrados por tier
+no `report` e selecionáveis via `run --tiers`:
+
+- **tier1 — órfãos & cache** (default): sidecars de checkpoint, rows de
+  mensagens cuja sessão já não existe, `session_locks/*.lock` velhos e
+  restos de sessões mortas em `acp-messages/`. Nenhum conteúdo de sessão
+  se perde.
+- **tier2 — sessões velhas** (default): sessões fora de `--grace-hours`
+  que o classificador marca `auto_delete` (mais deletes do judge / ids da
+  fila pending).
+- **tier3 — estado de sessão da GUI** (opt-in): chaves
+  `windsurfSpace.sessionWorkspace/*` no `state.vscdb`. Destrutivo —
+  `run --apply --tiers 3` recusa a menos que passes `--include-gui` **e**
+  `--snapshot PATH` apontando para um manifest de snapshot verificado do
+  [`devin-backup`](https://github.com/Icaro0310/devin-backup) com menos de
+  24h que cubra o `state.vscdb`, e o Devin tem de estar fechado.
+  `--apply` nunca é agendado — apagar continua manual.
+
+### Sessões automáticas (labels da bridge)
+
+Sessões criadas por automação (devin-bridge e amigos) carregam labels
+`origin:purpose` gravados em `<bridge-state>/session-labels.json`.
+O `report` lê esse sidecar (`--labels-file` para sobrepor), lista as
+sessões rotuladas numa secção **automatic sessions** e marca-as
+deterministicamente — `--exclude-labeled` remove-as da classificação para
+o relatório refletir só sessões não-automáticas.
+
+### Relatório diário agendado
+
+`devin-janitor install --daily` regista um `devin-janitor report` diário
+**read-only** usando o padrão de agendamento F6 partilhado no ecossistema
+devin-*: uma linha `@daily` etiquetada no crontab
+(`# devin-ecosystem:devin-janitor-daily`), uma entrada no Task Scheduler
+no Windows, ou um registo de job por tempo decorrido em
+`<config-dir>/.devin-ecosystem/scheduled.json` disparado pelo hook
+`UserPromptSubmit` quando não há scheduler. Fixa o backend com
+`--backend auto|tasksch|cron|elapsed`. Só o `report` é agendado —
+`--apply` continua uma decisão manual.
 
 Dados de sessão usam `%APPDATA%\devin` no Windows e `$XDG_DATA_HOME/devin`
 (por omissão `~/.local/share/devin`) no Linux. Ficheiros ACP da UI usam
@@ -124,8 +170,9 @@ ACP usam a raiz separada `$XDG_CONFIG_HOME/Devin` no Linux (por omissão
   judge.
 - As stores do Devin são internals privados; versões de schema além de v17
   param a ferramenta em vez de interpretar mal.
-- Apaga sessões — não checkpoints, workspaces nem chaves do `state.vscdb` —
-  e nunca toca em nada sem um dry-run primeiro.
+- Por omissão apaga só sessões — as chaves GUI do `state.vscdb` são tier3,
+  atrás de `--include-gui` + um snapshot `devin-backup` verificado com
+  menos de 24h — e nunca toca em nada sem um dry-run primeiro.
 
 ## Desenvolvimento
 
@@ -144,7 +191,10 @@ python -m pytest
 ## Quando NÃO usar
 
 - Você espera que sessões ambíguas sejam julgadas automaticamente — o defeito `--judge none` mantém tudo ambíguo (fail-open); ligue um comando juiz se quiser decisões semânticas.
-- Você precisa de limpar checkpoints, workspaces ou chaves `state.vscdb` — ele só apaga sessões.
+- Você precisa de deleção não supervisionada — só o `report` é agendável
+  (`install --daily`); `--apply` exige sempre um humano na volta.
+- Você quer limpeza tier3 do estado da GUI sem um snapshot `devin-backup`
+  verificado — o guarda recusa de propósito.
 - Você não pode rever um dry-run primeiro — essa revisão é o modelo de segurança, e `--apply` sem ler o plano derrota-o.
 
 ## FAQ
