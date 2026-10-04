@@ -2,6 +2,10 @@
 
 <img src="assets/banner.svg" alt="devin-janitor" width="100%"/>
 
+<a href="https://github.com/Icaro0310/devin-janitor/actions/workflows/ci.yml"><img src="https://github.com/Icaro0310/devin-janitor/actions/workflows/ci.yml/badge.svg" alt="ci"/></a>
+<a href="https://scorecard.dev/viewer/?uri=github.com/Icaro0310/devin-janitor"><img src="https://api.scorecard.dev/projects/github.com/Icaro0310/devin-janitor/badge" alt="OpenSSF Scorecard"/></a>
+
+
 </div>
 
 # devin-janitor
