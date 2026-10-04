@@ -81,7 +81,10 @@ def _report_command() -> str:
 
 def _install_cron(command: str) -> bool:
     """Append the tagged daily line to crontab. Returns False if no cron."""
-    if sys.platform.startswith("win") or not shutil.which("crontab"):
+    # shutil.which IS the capability check: no crontab.exe exists on a
+    # vanilla Windows PATH, so an explicit sys.platform guard adds nothing
+    # and makes the line-building logic untestable there.
+    if not shutil.which("crontab"):
         return False
     out = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
     current = out.stdout if out.returncode == 0 else ""
