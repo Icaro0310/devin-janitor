@@ -15,6 +15,8 @@
 
 **[Linux](README.linux.md)** · **[Personal Windows](README.windows.md)** · **[Corporate Windows](README.corporate-windows.md)**
 
+Part of the [awesome-devin](https://github.com/Icaro0310/awesome-devin) ecosystem: the curated hub for the devin-* tools.
+
 The lifecycle janitor for Devin sessions: **export first, classify in tiers,
 delete only the safe tiers, retry locked files, vacuum only when Devin is
 closed** — so `sessions.db` and `acp-messages/` never bloat with
