@@ -2,8 +2,8 @@
 
 Dedicated session for THIS repo. Template scaffold + `legacy/` contains the
 proven original (`session-janitor.py`, its keep-file format and SKILL.md) —
-**port it, don't call it**. Rules: `docs/SPEC.md` EN canonical, bilingual
-READMEs (problem/prior-art/Devin extra/limitations/install), logic in
+**port it, don't call it**. Rules: `docs/SPEC.md` EN canonical, a shared README plus Windows/Linux
+platform guides (problem/prior art/Devin extra/limitations/install), logic in
 `src/devin_janitor/` + thin `cli.py`, small commits + Devin trailer, push,
 STATUS.md + CHANGELOG.md.
 
