@@ -25,3 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sessions.db`, `acp-messages/`, `state.vscdb` and `session_locks/` —
   per-store bytes, age span and estimated recoverable bytes from the
   janitor's own rules; `--json`, optional `--judge`, always exits 0.
+
+### Changed
+
+- `llms.txt` no longer states a hard-coded ecosystem size; the registry owns the count.
