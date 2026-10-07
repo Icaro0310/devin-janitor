@@ -67,11 +67,16 @@ adapts that pipeline; it does not reinvent deletion.
 
 Python ≥ 3.10 and `pipx` are required. **Windows (PowerShell):** install `pipx` with `py -m pip install --user pipx`, run `py -m pipx ensurepath`, then reopen the terminal. **Linux (Debian/Ubuntu):** run `sudo apt install pipx python3-venv` and `pipx ensurepath`; reopen the terminal. Other Linux distributions should install `pipx` using their package manager.
 
-```bash
-pipx install "devin-janitor @ git+https://github.com/Icaro0310/devin-janitor.git"
-```
-
-(PyPI release planned — see STATUS.md M2.)
+<!-- DIST-STATUS:BEGIN — generated from devin-powerups/registry.json -->
+> **Source-only distribution.** This tool is not yet published to PyPI.
+> Install from source:
+>
+> ```bash
+> pipx install git+https://github.com/Icaro0310/devin-janitor.git
+> # or
+> uv tool install git+https://github.com/Icaro0310/devin-janitor.git
+> ```
+<!-- DIST-STATUS:END -->
 
 ## Usage
 
