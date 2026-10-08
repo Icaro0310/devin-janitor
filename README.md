@@ -17,8 +17,10 @@
 <!-- DEVIN-ECO:BEGIN -->
 > **Part of the [DEVIN ecosystem](https://github.com/Icaro0310/awesome-devin)**  
 > Track: Control · Nature: product  
-> For: operations, security engineers  
-> Interface: CLI / automation
+> For: Operations, Security engineers  
+> Interface: CLI / Automation  
+> Path: Operations · step 3/4 — after `devin-backup`, before `devin-metrics`  
+> Path: Security engineers · step 3/3 — after `devin-redact`
 <!-- DEVIN-ECO:END -->
 
 
