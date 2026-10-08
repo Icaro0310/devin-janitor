@@ -35,6 +35,17 @@ Use the tool's documented `--data-dir` or `--config-dir` flags for non-default l
 - **WSL:** treat it as a Linux machine — follow [README.linux.md](README.linux.md) inside it.
 - **Uninstall:** `uv tool uninstall <package>` (or `npm uninstall -g` for a Node.js tool) removes the CLI; delete `%APPDATA%\devin` to remove local data. No services or scheduled tasks are left behind.
 
+## Recurring runs (optional)
+
+_Daily cleanup. `devin-janitor install` registers the built-in daily report job (cron / Task Scheduler / elapsed hook) — prefer it over hand-rolled entries._
+
+```powershell
+schtasks /create /tn "devin-janitor" /tr "devin-janitor run --apply" /sc daily /st 04:00 /f
+```
+
+Runs under your account — no admin needed. Adjust `/sc`/`/st` (or `/sc onlogon` for daemons) to taste.
+
+
 ## Troubleshooting
 
 - If a command is not found, reopen PowerShell and run `uv tool update-shell`.
