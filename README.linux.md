@@ -36,6 +36,17 @@ Use the tool's documented `--data-dir` or `--config-dir` flags for non-default l
 - **Permissions:** tools read Devin data under `$XDG_DATA_HOME/devin` and write only their own config/state — no root or sudo is required.
 - **Scheduling:** optional recurring work belongs to `systemd --user` timers or cron; installation never creates jobs.
 
+## Recurring runs (optional)
+
+_Daily cleanup. `devin-janitor install` registers the built-in daily report job (cron / Task Scheduler / elapsed hook) — prefer it over hand-rolled entries._
+
+```cron
+30 4 * * * devin-janitor run --apply
+```
+
+Equivalent `systemd --user` timer works too; enable lingering if it must run without a login session.
+
+
 ## Troubleshooting
 
 - If a command is not found, ensure the `uv` tools directory is on `PATH` and run `uv tool update-shell`.
