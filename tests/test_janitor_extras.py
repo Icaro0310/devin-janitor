@@ -201,6 +201,36 @@ def test_verify_snapshot_refuses(tmp_path):
     assert not res["ok"] and "failed verification" in res["reason"]
 
 
+def test_verify_snapshot_rejects_lookalike_filename(tmp_path):
+    """`state.vscdb.old` must not satisfy tier-3 coverage."""
+    snap = tmp_path / "snap"
+    target = snap / "User" / "globalStorage" / "state.vscdb.old"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"old-bytes")
+    created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    (snap / "manifest.json").write_text(json.dumps({
+        "manifest_version": 2,
+        "tool": "devin-backup",
+        "created_at": created,
+        "files": [{
+            "path": "User/globalStorage/state.vscdb.old",
+            "snapshot_path": "User/globalStorage/state.vscdb.old",
+            "size": target.stat().st_size,
+            "sha256": _sha(target),
+        }],
+    }))
+    res = verify_snapshot(snap)
+    assert not res["ok"] and "does not cover" in res["reason"]
+
+
+def test_verify_snapshot_custom_fragment_still_substring(tmp_path):
+    """Custom fragments keep substring semantics; only the tier-3
+    default is an exact filename match."""
+    snap = _mk_snapshot(tmp_path)
+    res = verify_snapshot(snap, required_fragment="globalStorage")
+    assert res["ok"]
+
+
 def test_gui_state_entries_staleness(tmp_path):
     db = _mk_vscdb(tmp_path / "state.vscdb", [
         (_gui_key("acp", "old"),

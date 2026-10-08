@@ -337,9 +337,16 @@ def verify_snapshot(
             f"(>{max_age_s / 3600:.0f}h max)"
         )
         return res
+    def _covers(path: str) -> bool:
+        if required_fragment == SNAPSHOT_REQUIRED_FRAGMENT:
+            # Tier-3 coverage is an exact filename match — a
+            # `state.vscdb.old` entry must not satisfy it.
+            p = str(path).replace("\\", "/")
+            return p.endswith("/" + required_fragment) or p == required_fragment
+        return required_fragment in str(path)
+
     if required_fragment and not any(
-        str(e.get("path", "")).replace("\\", "/").endswith("/" + required_fragment)
-        or e.get("path") == required_fragment
+        _covers(e.get("path", ""))
         for e in files
         if isinstance(e, dict)
     ):
