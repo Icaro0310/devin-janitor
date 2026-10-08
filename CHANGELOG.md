@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- README gains the generated `Part of the DEVIN ecosystem` block
+  (track/nature/audience/interface rendered from the registry).
+
 - Initial scaffold from `devin-repo-template`.
 - M1: ported `legacy/session-janitor.py` into `src/devin_janitor/` —
   OS-aware path detection (`paths.py`), config-driven tier rules
