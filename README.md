@@ -14,6 +14,14 @@
 <a href="https://github.com/Icaro0310/devin-janitor/issues"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"/></a>
 </div>
 
+<!-- DEVIN-ECO:BEGIN -->
+> **Part of the [DEVIN ecosystem](https://github.com/Icaro0310/awesome-devin)**
+> Track: Control · Nature: product
+> For: operations, security engineers
+> Interface: CLI / automation
+<!-- DEVIN-ECO:END -->
+
+
 # devin-janitor
 
 > **Unofficial community project.** Not affiliated with, endorsed by, or
