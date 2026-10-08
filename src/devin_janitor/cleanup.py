@@ -338,7 +338,8 @@ def verify_snapshot(
         )
         return res
     if required_fragment and not any(
-        required_fragment in str(e.get("path", ""))
+        str(e.get("path", "")).replace("\\", "/").endswith("/" + required_fragment)
+        or e.get("path") == required_fragment
         for e in files
         if isinstance(e, dict)
     ):
