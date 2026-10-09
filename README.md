@@ -20,7 +20,7 @@
 > For: Operations, Security engineers  
 > Interface: CLI / Automation  
 > Path: Operations · step 3/4 — after `devin-backup`, before `devin-metrics`  
-> Path: Security engineers · step 3/3 — after `devin-redact`
+> Path: Security engineers · step 3/3 — after `devin-state`
 <!-- DEVIN-ECO:END -->
 
 
