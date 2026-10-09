@@ -1,5 +1,32 @@
 <div align="center">
 
+# devin-janitor — MOVED
+
+**This repository was absorbed into the
+[`devin-state`](https://github.com/Icaro0310/devin-state) monorepo.**
+
+The code now lives at `packages/janitor/` and the CLI is unchanged:
+`pip install devin-janitor` / `uv tool install devin-janitor` still
+installs the same package, now released from devin-state.
+
+```bash
+# development moved
+git clone https://github.com/Icaro0310/devin-state
+cd devin-state/packages/janitor
+```
+
+The repository is archived; open issues and PRs belong to devin-state.
+History remains readable here for reference.
+
+</div>
+
+---
+
+<details>
+<summary>Original README (pre-archive)</summary>
+
+<div align="center">
+
 <img src="assets/banner.svg" alt="devin-janitor" width="100%"/>
 
 <a href="https://github.com/Icaro0310/devin-janitor/actions/workflows/ci.yml"><img src="https://github.com/Icaro0310/devin-janitor/actions/workflows/ci.yml/badge.svg" alt="ci"/></a>
@@ -253,3 +280,5 @@ opt-in via `--judge command:<cmd>` (for example a poordjaevin ACP script).
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+</details>
