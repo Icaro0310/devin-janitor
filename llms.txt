@@ -29,4 +29,4 @@ devin-janitor solves the problem that daily Devin Desktop use accumulates sessio
 - [devin-ecosystem](https://icaro0310.github.io/): the tool ecosystem this belongs to
 - [devin-history](https://github.com/Icaro0310/devin-history): the export tool `--export-cmd` is designed to call before deletion
 - [devin-internals-spec](https://github.com/Icaro0310/devin-internals-spec): documents the stores and locks this operates on
-- [poordjaevin](https://github.com/Icaro0310/poordjaevin): a Devin-native judge backend for ambiguous sessions via `--judge command:`
+- [poordjaevin](https://github.com/Icaro0310/devin-judge): a Devin-native judge backend for ambiguous sessions via `--judge command:`
