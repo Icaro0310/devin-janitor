@@ -67,7 +67,7 @@ adapts that pipeline; it does not reinvent deletion.
   whole run on failure).
 - **Pluggable judge** for ambiguous sessions — `--judge command:<cmd>` pipes a
   JSON payload to any local CLI you trust (e.g. a
-  [poordjaevin](https://github.com/Icaro0310/poordjaevin) or Devin ACP helper),
+  [poordjaevin](https://github.com/Icaro0310/devin-judge) or Devin ACP helper),
   but the default `none` is purely rules-based and keeps everything ambiguous
   (fail-open). No external model or service is required.
 - Retries locked deletions via a pending queue instead of force-killing
@@ -172,7 +172,7 @@ Two honest caveats for restricted machines:
   archived before removal.
 - If you want a semantic judge for ambiguous sessions, plug one in via
   `--judge command:<cmd>` — a small script calling
-  [poordjaevin](https://github.com/Icaro0310/poordjaevin) with its Devin ACP
+  [poordjaevin](https://github.com/Icaro0310/devin-judge) with its Devin ACP
   backend gives you a Devin-native judge with no extra infrastructure.
 
 ## Platform support
